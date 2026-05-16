@@ -1,0 +1,1 @@
+import{a as t}from"./index-DcNlVx-A.js";const o=t.create({baseURL:"",withCredentials:!0});o.interceptors.response.use(e=>e,e=>{var s;return((s=e.response)==null?void 0:s.status)===401&&(localStorage.removeItem("access_token"),window.location.href="/login"),Promise.reject(e)});export{o as a};

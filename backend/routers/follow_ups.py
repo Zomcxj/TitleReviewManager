@@ -1,0 +1,97 @@
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.orm import Session
+from sqlalchemy import desc
+from database import get_db
+from models import FollowUp, Customer, User, Notification
+from schemas import FollowUpResponse, FollowUpCreate
+from auth import get_current_user
+from datetime import datetime, timezone
+from typing import List
+from routers.notifications import create_notification
+
+router = APIRouter(prefix="/api/follow-ups", tags=["跟进记录"])
+
+
+@router.get("/customer/{customer_id}", response_model=List[FollowUpResponse])
+async def get_customer_follow_ups(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    
+    follow_ups = (
+        db.query(FollowUp)
+        .filter(FollowUp.customer_id == customer_id)
+        .order_by(desc(FollowUp.created_at))
+        .all()
+    )
+    
+    results = []
+    for fu in follow_ups:
+        user = db.query(User).filter(User.id == fu.user_id).first()
+        results.append({
+            **FollowUpResponse.model_validate(fu).model_dump(),
+            "username": user.username if user else None,
+        })
+    
+    return results
+
+
+@router.post("/", response_model=FollowUpResponse)
+async def create_follow_up(
+    data: FollowUpCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    customer = db.query(Customer).filter(Customer.id == data.customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    
+    follow_up = FollowUp(
+        customer_id=data.customer_id,
+        user_id=current_user.get("id"),
+        content=data.content,
+        follow_up_type=data.follow_up_type,
+        next_follow_up_at=data.next_follow_up_at,
+    )
+    
+    db.add(follow_up)
+    db.flush()
+    
+    if data.next_follow_up_at:
+        salesman_id = customer.assigned_salesman_id
+        if salesman_id:
+            create_notification(
+                db=db,
+                user_id=salesman_id,
+                title="跟进提醒",
+                content=f"客户 {customer.name} 需要在 {data.next_follow_up_at.strftime('%m-%d %H:%M')} 进行跟进",
+                type="follow_up_reminder",
+                related_type="customer",
+                related_id=customer.id,
+            )
+    
+    db.commit()
+    db.refresh(follow_up)
+    
+    return FollowUpResponse.model_validate(follow_up)
+
+
+@router.delete("/{follow_up_id}")
+async def delete_follow_up(
+    follow_up_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    follow_up = db.query(FollowUp).filter(FollowUp.id == follow_up_id).first()
+    if not follow_up:
+        raise HTTPException(status_code=404, detail="跟进记录不存在")
+    
+    db.delete(follow_up)
+    db.commit()
+    
+    return {"message": "删除成功"}
