@@ -1,0 +1,150 @@
+/* Global Design System - Title Review Manager */
+
+/* Reset & Base */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', sans-serif;
+  color: #0f172a;
+  background: #f8fafc;
+  line-height: 1.5;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Focus Styles */
+:focus-visible {
+  outline: 2px solid rgba(99, 102, 241, 0.5);
+  outline-offset: 2px;
+}
+
+/* Transitions */
+a, button, input, select, textarea {
+  transition: all 0.15s ease;
+}
+
+/* Element Plus Overrides */
+.el-button {
+  font-weight: 500;
+  border-radius: 8px;
+}
+
+.el-button--primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border: none;
+}
+
+.el-button--primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.el-input__wrapper {
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px #e5e7eb;
+}
+
+.el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px #d1d5db;
+}
+
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.el-card {
+  border-radius: 12px;
+  border: 1px solid #f1f5f9;
+}
+
+.el-card__header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.el-table {
+  border-radius: 10px;
+}
+
+.el-table th.el-table__cell {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.el-tag {
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.el-dialog {
+  border-radius: 16px;
+}
+
+.el-dialog__header {
+  padding: 24px 24px 16px;
+}
+
+.el-dialog__body {
+  padding: 0 24px 16px;
+}
+
+.el-dialog__footer {
+  padding: 16px 24px 24px;
+}
+
+/* Utility Classes */
+.transition-all {
+  transition: all 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.08);
+}
+
+/* Selection Color */
+::selection {
+  background: rgba(99, 102, 241, 0.2);
+  color: #0f172a;
+}
+
+/* Link Styles */
+a {
+  color: #6366f1;
+  text-decoration: none;
+}
+
+a:hover {
+  color: #4f46e5;
+}
