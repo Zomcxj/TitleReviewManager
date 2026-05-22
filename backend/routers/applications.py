@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Application, Customer, OperationLog, Notification
+from models import Application, Customer, OperationLog, Notification, User
 from schemas import ApplicationUpdate, ApplicationResponse, VALID_TRANSITIONS
 from auth import get_current_user
 from datetime import datetime, timezone
@@ -70,6 +70,19 @@ async def update_application(
                         related_type="application",
                         related_id=app.id,
                     )
+                elif new_status == "完成资料":
+                    reviewers = db.query(User).filter(User.role == 'reviewer').all()
+                    admins = db.query(User).filter(User.role == 'admin').all()
+                    for u in reviewers + admins:
+                        create_notification(
+                            db=db,
+                            user_id=u.id,
+                            title="新申报待审核",
+                            content=f"客户 {customer.name} 已提交审核，请前往审核工作台处理",
+                            type="status_change",
+                            related_type="application",
+                            related_id=app.id,
+                        )
                 elif new_status in ["通过", "不通过"]:
                     create_notification(
                         db=db,

@@ -28,6 +28,7 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column prop="password" label="密码" min-width="120" />
       <el-table-column prop="created_at" label="创建时间" min-width="170">
         <template #default="{ row }">
           {{ formatDate(row.created_at) }}
@@ -244,6 +245,7 @@ onMounted(loadUsers)
 
 <style scoped>
 .user-management {
+  width: 100%;
   background: #fff;
   border-radius: 12px;
   padding: 20px;

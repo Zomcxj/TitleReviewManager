@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 import uuid
 from utils.audit_logger import manual_audit_log
 from storage import get_pinyin_initial, create_customer_directories, customer_dir
-import uuid
+from routers.notifications import create_notification
 
 router = APIRouter(prefix="/api/customers", tags=["客户管理"])
 
@@ -65,10 +65,15 @@ async def list_customers(
     
     results = []
     for customer, app in items:
+        # 统计该申请的材料数量
+        materials_count = 0
+        if app:
+            materials_count = db.query(func.count(Material.id)).filter(Material.application_id == app.id).scalar() or 0
         results.append({
             **CustomerResponse.model_validate(customer).model_dump(),
             "current_status": app.status if app else "未知",
             "application_id": app.id if app else None,
+            "materials_count": materials_count,
         })
     
     return {"items": results, "total": total, "page": page, "page_size": page_size}
@@ -165,10 +170,10 @@ async def create_customer(
     # 创建 NAS 目录模板
     salesman = db.query(User).filter(User.id == customer.assigned_salesman_id).first() if customer.assigned_salesman_id else None
     create_customer_directories(
-        year=customer.created_at.year or datetime.utcnow().year,
+        year=customer.created_at.year if customer.created_at else datetime.utcnow().year,
         salesman_name=salesman.username if salesman else "未分配",
         customer_name=customer.name,
-        initial=customer.name_pinyin,
+        initial=customer.name_pinyin or get_pinyin_initial(customer.name),
     )
     app = Application(
         customer_id=customer.id,
@@ -230,6 +235,30 @@ async def update_customer(
         new_value=update_data,
         request=request,
     )
+    # 发送通知
+    title = "客户信息变更"
+    content = f"客户 {customer.name} 的信息已被 {user.get('username')} 修改"
+    if customer.assigned_salesman_id:
+        create_notification(
+            db=db,
+            user_id=customer.assigned_salesman_id,
+            title=title,
+            content=content,
+            type="status_change",
+            related_type="customer",
+            related_id=customer_id,
+        )
+    admins = db.query(User).filter(User.role == "admin").all()
+    for admin in admins:
+        create_notification(
+            db=db,
+            user_id=admin.id,
+            title=title,
+            content=content,
+            type="status_change",
+            related_type="customer",
+            related_id=customer_id,
+        )
     db.commit()
     db.refresh(customer)
     return CustomerResponse.model_validate(customer)

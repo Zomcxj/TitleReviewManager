@@ -6,20 +6,26 @@
 
     <!-- 筛选栏 -->
     <div class="filter-bar">
-      <el-select v-model="filterSalesman" placeholder="按业务员筛选" clearable style="width: 180px" @change="loadData">
-        <el-option label="全部" :value="''" />
-        <el-option v-for="s in salesmenList" :key="s.id" :label="s.real_name" :value="s.id" />
-      </el-select>
-      <el-input v-model="keyword" placeholder="搜索客户姓名/身份证" style="width: 240px" clearable @keyup.enter="loadData" @clear="loadData">
-        <template #prefix><el-icon><Search /></el-icon></template>
-      </el-input>
+      <div class="filter-item">
+        <el-select v-model="filterSalesman" placeholder="按业务员筛选" clearable @change="loadData">
+          <el-option label="全部" :value="''" />
+          <el-option v-for="s in salesmenList" :key="s.id" :label="s.real_name" :value="s.id" />
+        </el-select>
+      </div>
+      <div class="filter-item">
+        <el-input v-model="keyword" placeholder="搜索客户姓名/身份证" clearable @keyup.enter="loadData" @clear="loadData">
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+      </div>
       <el-button @click="loadData">查询</el-button>
 
-      <div style="flex:1"></div>
+      <div class="filter-spacer"></div>
 
-      <el-select v-model="transferTargetId" placeholder="转让给..." style="width: 180px" :disabled="!selectedIds.length">
-        <el-option v-for="s in salesmenList" :key="s.id" :label="s.real_name" :value="s.id" />
-      </el-select>
+      <div class="filter-item">
+        <el-select v-model="transferTargetId" placeholder="转让给..." :disabled="!selectedIds.length">
+          <el-option v-for="s in salesmenList" :key="s.id" :label="s.real_name" :value="s.id" />
+        </el-select>
+      </div>
       <el-button type="warning" :disabled="!selectedIds.length || !transferTargetId" @click="handleBatchTransfer" :loading="transferLoading">
         <el-icon><Switch /></el-icon> 转让选中客户 ({{ selectedIds.length }})
       </el-button>
@@ -29,7 +35,7 @@
     <el-table :data="customers" v-loading="loading" style="width: 100%; margin-top: 16px"
       @selection-change="handleSelectionChange" row-key="id">
       <el-table-column type="selection" width="50" />
-      <el-table-column prop="name" label="姓名" width="100">
+      <el-table-column prop="name" label="姓名" min-width="100">
         <template #default="{ row }">
           <div class="name-cell">
             <div class="name-avatar">{{ row.name.charAt(0) }}</div>
@@ -37,14 +43,14 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="phone" label="手机号" width="120" />
-      <el-table-column prop="education" label="学历" width="100" />
-      <el-table-column prop="current_salesman" label="当前业务员" width="130">
+      <el-table-column prop="phone" label="手机号" min-width="100" />
+      <el-table-column prop="education" label="学历" min-width="80" />
+      <el-table-column prop="current_salesman" label="当前业务员" min-width="110">
         <template #default="{ row }">
           <el-tag size="small" type="info">{{ row.current_salesman || '未分配' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="当前状态" width="120">
+      <el-table-column label="当前状态" min-width="100">
         <template #default="{ row }">
           <el-tag size="small">{{ row.current_status || '-' }}</el-tag>
         </template>
@@ -140,7 +146,7 @@ onMounted(() => {
 
 <style scoped>
 .transfer-page {
-  max-width: 1200px;
+  width: 100%;
 }
 .page-header {
   display: flex;
@@ -159,6 +165,22 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+.filter-item {
+  flex: 1 1 160px;
+  min-width: 140px;
+  max-width: 280px;
+}
+.filter-item > :deep(.el-select),
+.filter-item > :deep(.el-input) {
+  width: 100%;
+}
+.filter-bar > .el-button {
+  flex: 0 0 auto;
+}
+.filter-spacer {
+  flex: 1;
+  min-width: 0;
 }
 .name-cell {
   display: flex;

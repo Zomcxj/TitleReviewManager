@@ -52,19 +52,24 @@
       </el-table-column>
       <el-table-column prop="resource_type" label="资源类型" width="100" />
       <el-table-column prop="resource_id" label="资源 ID" width="80" />
-      <el-table-column label="变更详情" min-width="300">
+      <el-table-column label="变更详情" min-width="350">
         <template #default="{ row }">
-          <div v-if="row.old_value || row.new_value" class="change-detail">
-            <div v-if="row.old_value" class="old-value">
-              <span class="label">变更前:</span>
-              <code>{{ formatJson(row.old_value) }}</code>
+          <div class="change-detail-wrap">
+            <div v-if="row.resource_type === 'customer' && getCustomerName(row)" class="customer-badge">
+              <el-tag size="small" type="info">{{ getCustomerName(row) }}</el-tag>
             </div>
-            <div v-if="row.new_value" class="new-value">
-              <span class="label">变更后:</span>
-              <code>{{ formatJson(row.new_value) }}</code>
+            <div v-if="row.old_value || row.new_value" class="change-detail">
+              <div v-if="row.old_value" class="old-value">
+                <span class="label">变更前:</span>
+                <code>{{ formatJson(row.old_value) }}</code>
+              </div>
+              <div v-if="row.new_value" class="new-value">
+                <span class="label">变更后:</span>
+                <code>{{ formatJson(row.new_value) }}</code>
+              </div>
             </div>
+            <span v-else class="no-detail">-</span>
           </div>
-          <span v-else class="no-detail">-</span>
         </template>
       </el-table-column>
       <el-table-column prop="ip_address" label="IP 地址" width="140" />
@@ -159,6 +164,18 @@ function getActionType(action: string): 'success' | 'warning' | 'danger' | 'info
   return 'info'
 }
 
+function getCustomerName(row: Log): string {
+  try {
+    const newVal = typeof row.new_value === 'string' ? JSON.parse(row.new_value) : row.new_value
+    if (newVal?.name) return newVal.name
+  } catch {}
+  try {
+    const oldVal = typeof row.old_value === 'string' ? JSON.parse(row.old_value) : row.old_value
+    if (oldVal?.name) return oldVal.name
+  } catch {}
+  return ''
+}
+
 function formatJson(obj: any): string {
   if (!obj) return ''
   try {
@@ -233,5 +250,13 @@ code {
 
 .no-detail {
   color: #909399;
+}
+.change-detail-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.customer-badge {
+  margin-bottom: 2px;
 }
 </style>

@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from enums import (
     UserRole,
     ApplicationStatus,
@@ -27,6 +27,7 @@ class LoginRequest(BaseModel):
 class UserResponse(BaseModel):
     id: int
     username: str
+    password: Optional[str] = None
     role: str
     real_name: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -174,6 +175,12 @@ class ReviewResponse(BaseModel):
     description: Optional[str]
     review_file_path: Optional[str]
     created_at: datetime
+
+    @field_serializer('created_at')
+    def serialize_created_at(self, v: datetime) -> str:
+        if v is not None and v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        return v.isoformat()
 
     class Config:
         from_attributes = True

@@ -19,6 +19,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    password = Column(String(128), nullable=True, comment="明文密码，仅管理员管理用")
     role = Column(String(20), nullable=False)
     real_name = Column(String(50))
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -102,7 +103,7 @@ class Review(Base):
     issue_type = Column(String(50))
     description = Column(Text)
     review_file_path = Column(String(500))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     material = relationship("Material", back_populates="reviews")
     application = relationship("Application", back_populates="reviews")

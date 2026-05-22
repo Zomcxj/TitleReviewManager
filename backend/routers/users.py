@@ -43,6 +43,7 @@ async def create_user(data: UserCreate, request: Request, db: Session = Depends(
     u = User(
         username=data.username,
         password_hash=hash_password(data.password),
+        password=data.password,
         role=data.role,
         real_name=data.real_name,
     )
@@ -61,7 +62,7 @@ async def update_user(user_id: int, data: UserUpdate, request: Request, db: Sess
         raise HTTPException(status_code=404, detail="用户不存在")
     upd = data.model_dump(exclude_unset=True)
     if "password" in upd:
-        upd["password_hash"] = hash_password(upd.pop("password"))
+        upd["password_hash"] = hash_password(upd["password"])
     if "username" in upd and upd["username"] != u.username:
         if db.query(User).filter(User.username == upd["username"]).first():
             raise HTTPException(status_code=400, detail="用户名已存在")

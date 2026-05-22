@@ -8,28 +8,19 @@
         </el-select>
         <el-upload
           ref="uploadRef"
-          :action="`/api/applications/${applicationId}/materials`"
-          :data="{ category: selectedCategory }"
+          :http-request="customUpload"
           :before-upload="beforeUpload"
           :on-success="handleSuccess"
           :on-error="handleError"
           :show-file-list="false"
-          drag
-          style="margin-left: 12px"
         >
           <template #trigger>
-            <el-button type="primary">
+            <el-button type="primary" size="small">
               <el-icon><Upload /></el-icon> 上传材料
             </el-button>
           </template>
-          <template #tip>
-            <div class="drag-hint">拖拽文件到此处或点击上传</div>
-          </template>
         </el-upload>
       </div>
-      <el-button v-if="canSubmit" type="success" @click="handleSubmitReview" :disabled="materials.length === 0">
-        <el-icon><Check /></el-icon> 材料已齐，提交审核
-      </el-button>
     </div>
 
     <!-- Issues Panel -->
@@ -216,6 +207,18 @@ function beforeUpload(file: File) {
   return true
 }
 
+async function customUpload(options: any) {
+  const formData = new FormData()
+  formData.append('category', selectedCategory.value)
+  formData.append('file', options.file)
+  try {
+    const { data } = await api.post(`/api/applications/${props.applicationId}/materials/`, formData)
+    options.onSuccess(data, options.file)
+  } catch (err: any) {
+    options.onError(err)
+  }
+}
+
 function handleSuccess() {
   ElMessage.success('上传成功')
   loadMaterials()
@@ -284,11 +287,21 @@ watch(() => props.applicationId, loadMaterials, { immediate: true })
 .upload-left {
   display: flex;
   align-items: center;
+  gap: 12px;
 }
-.drag-hint {
-  font-size: 12px;
-  color: #94a3b8;
-  margin-left: 8px;
+.upload-left :deep(.el-select .el-input__wrapper) {
+  padding: 0 8px;
+}
+.upload-left :deep(.el-select .el-input__inner) {
+  font-size: 14px;
+}
+.upload-left :deep(.el-upload .el-button) {
+  height: 36px !important;
+  padding: 8px 12px !important;
+  line-height: 1 !important;
+}
+.upload-left :deep(.el-upload .el-button .el-icon) {
+  margin-right: 4px;
 }
 .issues-panel {
   background: #fef2f2;

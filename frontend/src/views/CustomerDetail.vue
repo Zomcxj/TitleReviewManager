@@ -15,11 +15,8 @@
         <el-button v-if="isSalesman" type="warning" @click="showTransferDialog = true">
           <el-icon><Switch /></el-icon> 转让客户
         </el-button>
-        <el-button v-if="canSubmitReview" type="success" @click="handleReadyForReview">
-          <el-icon><Check /></el-icon> 提交内部审核
-        </el-button>
-        <el-button v-if="canSubmitToInstitution" type="primary" @click="showSubmitDialog = true">
-          <el-icon><Upload /></el-icon> 提交评审机构
+        <el-button v-if="isSalesman && currentApp" :type="submitBtnType" @click="handleSubmitClick" :disabled="submitBtnDisabled">
+          <el-icon><component :is="submitBtnIcon" /></el-icon> {{ submitBtnText }}
         </el-button>
         <el-button v-if="canRecordFeedback" @click="showFeedbackDialog = true">
           <el-icon><ChatDotRound /></el-icon> 录入反馈
@@ -48,10 +45,15 @@
               <el-descriptions-item label="现职称">{{ customer.current_title || '-' }}</el-descriptions-item>
               <el-descriptions-item label="取得年份">{{ customer.current_title_year || '-' }}</el-descriptions-item>
               <el-descriptions-item label="报考职称">
-                <span>{{ customer.target_title || '-' }}</span>
-                <el-button v-if="isSalesman" type="primary" text size="small" @click="showTargetTitleDialog = true" style="margin-left: 8px">
-                  {{ customer.target_title ? '修改' : '设置' }}
-                </el-button>
+                <template v-if="isSalesman">
+                  <el-select v-model="inlineTargetTitle" placeholder="请选择或输入报考职称" size="small" filterable allow-create
+                    style="width: 160px" @change="handleSaveTargetTitle">
+                    <el-option label="初级工程师" value="初级工程师" />
+                    <el-option label="中级工程师" value="中级工程师" />
+                    <el-option label="高级工程师" value="高级工程师" />
+                  </el-select>
+                </template>
+                <span v-else>{{ customer.target_title || '-' }}</span>
               </el-descriptions-item>
               <el-descriptions-item label="工作单位">{{ customer.work_unit || '-' }}</el-descriptions-item>
               <el-descriptions-item label="职务">{{ customer.position || '-' }}</el-descriptions-item>
@@ -168,18 +170,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showTargetTitleDialog" title="设置报考职称" width="400px">
-      <el-form label-position="top">
-        <el-form-item label="报考职称">
-          <el-input v-model="targetTitleForm" placeholder="如：高级工程师、副教授等" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showTargetTitleDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleSaveTargetTitle">保存</el-button>
-      </template>
-    </el-dialog>
-
     <el-dialog v-model="showTransferDialog" title="转让客户" width="400px">
       <el-form label-position="top">
         <el-form-item label="转让给">
@@ -197,7 +187,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../api'
@@ -217,12 +207,11 @@ const currentAppId = ref<number | null>(null)
 
 const showSubmitDialog = ref(false)
 const showFeedbackDialog = ref(false)
-const showTargetTitleDialog = ref(false)
 const showTransferDialog = ref(false)
 const institutionName = ref('')
 const feedbackType = ref('通过')
 const feedbackContent = ref('')
-const targetTitleForm = ref('')
+const inlineTargetTitle = ref('')
 const salesmenList = ref<any[]>([])
 const transferTargetId = ref<number | null>(null)
 const transferLoading = ref(false)
@@ -246,6 +235,35 @@ const canSubmitReview = computed(() => {
 const canSubmitToInstitution = computed(() => {
   return isSalesman.value && currentApp.value?.status === '完成资料'
 })
+
+const submitBtnText = computed(() => {
+  if (!currentApp.value) return ''
+  if (currentApp.value.status === '完成资料') return '提交评审机构'
+  return '提交审核员审核'
+})
+const submitBtnType = computed(() => {
+  if (!currentApp.value) return 'default'
+  if (currentApp.value.status === '完成资料') return 'primary'
+  return 'success'
+})
+const submitBtnIcon = computed(() => {
+  if (!currentApp.value) return 'Check'
+  if (currentApp.value.status === '完成资料') return 'Upload'
+  return 'Check'
+})
+const submitBtnDisabled = computed(() => {
+  if (!currentApp.value) return true
+  if (currentApp.value.status === '完成资料') return false
+  return false
+})
+
+function handleSubmitClick() {
+  if (currentApp.value?.status === '完成资料') {
+    showSubmitDialog.value = true
+  } else {
+    handleReadyForReview()
+  }
+}
 const canRecordFeedback = computed(() => {
   return isSalesman.value && currentApp.value?.status === '提交评审机构审核'
 })
@@ -278,6 +296,22 @@ watch(activeTab, (tab) => {
   if (tab === 'reviews' && currentAppId.value) loadReviews(currentAppId.value)
   if (tab === 'logs' && currentAppId.value) loadLogs(currentAppId.value)
 })
+// 每 10 秒自动刷新状态（审核员通过后按钮自动变为"提交评审机构"）
+let statusPollTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  statusPollTimer = setInterval(() => {
+    if (route.params.id) {
+      api.get(`/api/customers/${route.params.id}`).then(({ data }) => {
+        if (data.applications) {
+          applications.value = data.applications
+        }
+      }).catch(() => {})
+    }
+  }, 10000)
+})
+onUnmounted(() => {
+  if (statusPollTimer) clearInterval(statusPollTimer)
+})
 
 async function loadData() {
   loading.value = true
@@ -288,6 +322,8 @@ async function loadData() {
     if (applications.value.length && !currentAppId.value) {
       currentAppId.value = applications.value[0].id
     }
+    // 初始化报考职称输入框
+    inlineTargetTitle.value = data.target_title || ''
   } finally {
     loading.value = false
   }
@@ -388,20 +424,14 @@ async function handleReviseToComplete(appId: number) {
 async function handleSaveTargetTitle() {
   if (!customer.value) return
   try {
-    await api.put(`/api/customers/${customer.value.id}`, { target_title: targetTitleForm.value || null })
+    const val = inlineTargetTitle.value || null
+    const { data } = await api.put(`/api/customers/${customer.value.id}`, { target_title: val })
+    customer.value.target_title = data.target_title || val
     ElMessage.success('报考职称已保存')
-    showTargetTitleDialog.value = false
-    loadData()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '保存失败')
   }
 }
-
-watch(() => showTargetTitleDialog.value, (val) => {
-  if (val && customer.value) {
-    targetTitleForm.value = customer.value.target_title || ''
-  }
-})
 
 async function loadSalesmen() {
   try {
@@ -558,5 +588,15 @@ watch(() => showTransferDialog.value, (val) => {
   color: #94a3b8;
   font-size: 12px;
   margin: 0;
+}
+.info-descriptions :deep(.el-descriptions__label) {
+  background: #6366f1;
+  color: #fff;
+  font-weight: 600;
+}
+.info-descriptions :deep(.el-descriptions__content) {
+  color: #1e293b;
+  font-weight: 500;
+  background: #f8fafc;
 }
 </style>

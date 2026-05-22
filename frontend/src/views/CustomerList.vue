@@ -21,7 +21,7 @@
 
     <el-table :data="customers" style="width: 100%; margin-top: 16px" v-loading="loading" row-key="id"
       :row-class-name="getRowClass">
-      <el-table-column prop="name" label="姓名" width="120">
+      <el-table-column prop="name" label="姓名" min-width="120">
         <template #default="{ row }">
           <div class="name-cell">
             <div class="name-avatar">{{ row.name.charAt(0) }}</div>
@@ -29,22 +29,22 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="phone" label="手机号" width="120" />
-      <el-table-column prop="education" label="学历" width="140" />
-      <el-table-column v-if="showSalesman" label="业务员" width="110">
+      <el-table-column prop="phone" label="手机号" min-width="110" />
+      <el-table-column prop="education" label="学历" min-width="100" />
+      <el-table-column v-if="showSalesman" label="业务员" min-width="100">
         <template #default="{ row }">
           {{ salesmenMap[row.assigned_salesman_id] || '未分配' }}
         </template>
       </el-table-column>
       <el-table-column prop="work_unit" label="工作单位" min-width="180" show-overflow-tooltip />
-      <el-table-column label="当前状态" width="140">
+      <el-table-column label="当前状态" min-width="100">
         <template #default="{ row }">
           <el-tag :type="statusType(row.current_status)" effect="plain" round size="small">
             {{ row.current_status || '-' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作提示" width="150">
+      <el-table-column label="操作提示" min-width="120">
         <template #default="{ row }">
           <span class="hint-text">{{ getHint(row.current_status) }}</span>
         </template>

@@ -46,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 
 interface Notification {
@@ -62,6 +62,7 @@ interface Notification {
 const loading = ref(false)
 const notifications = ref<Notification[]>([])
 const unreadCount = ref(0)
+let intervalId: ReturnType<typeof setInterval> | null = null
 
 async function fetchNotifications() {
   loading.value = true
@@ -120,7 +121,16 @@ function formatTime(time: string): string {
   return '刚刚'
 }
 
-onMounted(fetchNotifications)
+onMounted(() => {
+  fetchNotifications()
+  intervalId = setInterval(fetchNotifications, 30000)
+})
+
+onUnmounted(() => {
+  if (intervalId) {
+    clearInterval(intervalId)
+  }
+})
 </script>
 
 <style scoped>
