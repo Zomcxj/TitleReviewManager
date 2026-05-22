@@ -66,6 +66,7 @@ async def list_materials(
     return {"items": db_list, "tree": tree}
 
 
+@router.post("")
 @router.post("/")
 async def upload_material(
     application_id: int,

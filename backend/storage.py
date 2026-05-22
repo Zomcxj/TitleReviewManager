@@ -77,9 +77,12 @@ def category_subdir(customer_rel: str, category: str) -> str:
 def create_customer_directories(year: int, salesman_name: str, customer_name: str, initial: str = "") -> str:
     """新建客户时创建完整目录模板"""
     base = customer_dir(year, salesman_name, customer_name, initial)
+    root = get_storage_root()
+    full = os.path.join(root, base)
+    logger.info(f"Creating customer directories at: {full}")
     for cat_path in CATEGORY_MAP.values():
         ensure_dir(os.path.join(base, cat_path))
-    logger.info(f"Created customer directories: {base}")
+    logger.info(f"Created customer directories: {base} (root={root})")
     return base
 
 

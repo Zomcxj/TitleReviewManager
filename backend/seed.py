@@ -54,10 +54,10 @@ def seed():
             if not existing:
                 user = User(
                     username=u["username"],
-    password_hash=hash_password(u["password"]),
-    role=u["role"],
-    real_name=u["real_name"],
-
+                    password_hash=hash_password(u["password"]),
+                    password=u["password"],
+                    role=u["role"],
+                    real_name=u["real_name"],
                 )
                 db.add(user)
                 db.flush()

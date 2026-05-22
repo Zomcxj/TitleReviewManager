@@ -50,13 +50,11 @@
                 <span class="review-name">{{ selectedApp.name }}</span>
                 <span class="review-batch">{{ selectedApp.batch_number || selectedApp.batch }}</span>
               </div>
-              <div class="review-actions">
-                <el-button type="success" size="small" @click="handleBatchApprove"
-                  :disabled="!selectedMaterials.length">
+              <div v-if="materials.length" class="review-actions">
+                <el-button type="success" size="small" @click="handleBatchApprove">
                   <el-icon><Select /></el-icon> 全部通过
                 </el-button>
-                <el-button type="danger" size="small" @click="handleBatchReject"
-                  :disabled="!selectedMaterials.length">
+                <el-button type="danger" size="small" @click="handleBatchReject">
                   <el-icon><CircleCloseFilled /></el-icon> 退回标记
                 </el-button>
               </div>
@@ -216,7 +214,7 @@ async function selectApp(app: any) {
   loadingMaterials.value = true
   try {
     const { data } = await api.get(`/api/applications/${appId}/materials/`)
-    materials.value = data
+    materials.value = data.items || data
     const { data: reviewData } = await api.get(`/api/reviews/application/${appId}`)
     selectedAppReviews.value = reviewData
   } finally {
@@ -255,34 +253,68 @@ async function submitReview() {
     await api.post('/api/reviews/', formData)
     ElMessage.success('已标记问题')
     reviewDialogVisible.value = false
-    selectApp(selectedApp.value)
-    loadPendingApps()
+    // 本地更新材料状态，避免重载左侧列表导致UI闪烁缩短
+    if (currentMaterial.value) {
+      currentMaterial.value.audit_status = '已标记问题'
+    }
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '操作失败')
   }
 }
 
 async function handleBatchApprove() {
+  if (!materials.value.length) {
+    ElMessage.warning('暂无可审核的材料')
+    return
+  }
   const appId = selectedApp.value.application_id || selectedApp.value.id
+  const targets = selectedMaterials.value.length ? selectedMaterials.value : materials.value
+  const isPartial = selectedMaterials.value.length > 0 && selectedMaterials.value.length < materials.value.length
   try {
     await api.post(`/api/reviews/batch-review`, {
       application_id: appId,
       overall_result: '通过',
-      review_details: selectedMaterials.value.map((m: any) => ({
+      review_details: targets.map((m: any) => ({
         material_id: m.id,
         description: '审核通过',
       })),
       description: '批量审核通过',
     })
-    ElMessage.success('批量通过成功')
-    loadPendingApps()
-    selectApp(selectedApp.value)
+    ElMessage.success(`已通过 ${targets.length} 项材料`)
+    // 本地更新材料状态
+    targets.forEach((m: any) => { m.audit_status = '已通过' })
+    selectedMaterials.value = []
+    if (isPartial) {
+      // 部分通过：不清除，让审核员继续审核剩余材料
+      const remaining = materials.value.filter((m: any) => m.audit_status !== '已通过')
+      if (!remaining.length) {
+        // 全都通过了，移除
+        pendingApps.value = pendingApps.value.filter(
+          (app: any) => (app.id || app.application_id) !== appId
+        )
+        selectedApp.value = null
+        materials.value = []
+      } else {
+        ElMessage.info(`还有 ${remaining.length} 项材料待审核`)
+      }
+    } else {
+      // 全部通过，从待审核列表中移除
+      pendingApps.value = pendingApps.value.filter(
+        (app: any) => (app.id || app.application_id) !== appId
+      )
+      selectedApp.value = null
+      materials.value = []
+    }
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '操作失败')
   }
 }
 
 function handleBatchReject() {
+  if (!materials.value.length) {
+    ElMessage.warning('暂无可审核的材料')
+    return
+  }
   rejectReason.value = ''
   rejectDialogVisible.value = true
 }
@@ -293,21 +325,35 @@ async function submitBatchReject() {
     return
   }
   const appId = selectedApp.value.application_id || selectedApp.value.id
+  const targets = selectedMaterials.value.length ? selectedMaterials.value : materials.value
+  const isPartial = selectedMaterials.value.length > 0 && selectedMaterials.value.length < materials.value.length
   try {
     await api.post(`/api/reviews/batch-review`, {
       application_id: appId,
       overall_result: '退回',
-      review_details: selectedMaterials.value.map((m: any) => ({
+      review_details: targets.map((m: any) => ({
         material_id: m.id,
         issue_type: '需要补充/修改',
         description: rejectReason.value,
       })),
       description: rejectReason.value,
     })
-    ElMessage.success('已退回并标记问题')
     rejectDialogVisible.value = false
-    loadPendingApps()
-    selectApp(selectedApp.value)
+    // 本地更新材料状态
+    targets.forEach((m: any) => { m.audit_status = '已标记问题' })
+    selectedMaterials.value = []
+    if (isPartial) {
+      // 部分退回：不清除列表，让审核员继续审核剩余材料
+      ElMessage.success(`已退回 ${targets.length} 项材料，还有 ${materials.value.filter(m => m.audit_status !== '已标记问题').length} 项继续审核`)
+    } else {
+      // 全部退回：移除待审核列表
+      ElMessage.success(`已退回 ${targets.length} 项材料`)
+      pendingApps.value = pendingApps.value.filter(
+        (app: any) => (app.id || app.application_id) !== appId
+      )
+      selectedApp.value = null
+      materials.value = []
+    }
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '操作失败')
   }

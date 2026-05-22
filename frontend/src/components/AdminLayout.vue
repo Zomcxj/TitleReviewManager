@@ -93,7 +93,7 @@
         </el-header>
         <el-main class="main-area">
           <div class="main-content">
-            <router-view />
+            <router-view :key="$route.fullPath" />
           </div>
         </el-main>
       </el-container>

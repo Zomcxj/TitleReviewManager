@@ -7,6 +7,7 @@ from auth import get_current_user
 from datetime import datetime
 import os
 import uuid
+from routers.notifications import create_notification
 
 router = APIRouter(prefix="/api/reviews", tags=["审核"])
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
@@ -82,21 +83,63 @@ async def create_review(
 
     db.commit()
     db.refresh(review)
+
+    # 取材料名称供通知使用
+    material_name = material.name if material_id and material else ""
+
+    # 单条退回/通过时发送通知给业务员和管理员
+    if application_id and result in ("退回", "通过") and material_id:
+        app = db.query(Application).filter(Application.id == application_id).first()
+        if app:
+            customer = app.customer
+            if customer and customer.assigned_salesman_id:
+                if result == "退回":
+                    title = "材料退回通知"
+                    content = f"客户 {customer.name} 的材料「{material_name}」已被退回"
+                else:
+                    title = "材料审核通过"
+                    content = f"客户 {customer.name} 的材料「{material_name}」已通过审核"
+                create_notification(
+                    db=db,
+                    user_id=customer.assigned_salesman_id,
+                    title=title,
+                    content=content,
+                    type="status_change",
+                    related_type="material",
+                    related_id=material_id,
+                )
+            admins = db.query(User).filter(User.role == "admin").all()
+            for admin in admins:
+                if result == "退回":
+                    title = "材料退回通知"
+                    content = f"客户 {customer.name if customer else ''} 的材料已被退回" if customer else "材料已被退回"
+                else:
+                    title = "材料审核通过"
+                    content = f"客户 {customer.name if customer else ''} 的材料已通过审核" if customer else "材料已通过审核"
+                create_notification(
+                    db=db,
+                    user_id=admin.id,
+                    title=title,
+                    content=content,
+                    type="status_change",
+                    related_type="material",
+                    related_id=material_id,
+                )
+
     return ReviewResponse.model_validate(review).model_dump()
 
 
 @router.post("/batch-review")
 async def batch_review(
     request: Request,
-    application_id: int,
     db: Session = Depends(get_db),
 ):
     user = await get_current_user(request)
+    body = await request.json()
+    application_id = body.get("application_id")
     app = db.query(Application).filter(Application.id == application_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="申报批次不存在")
-
-    body = await request.json()
     overall_result = body.get("overall_result")
     review_details = body.get("review_details", [])
     description = body.get("description", "")
@@ -147,6 +190,42 @@ async def batch_review(
             new_value={"detail": f"退回 {len(review_details)} 项材料。审核员: {user.get('username')}"},
         )
         db.add(log)
+
+    # 发送通知
+    customer = app.customer
+    if customer and customer.assigned_salesman_id:
+        if overall_result == "通过":
+            title = "审核通过通知"
+            content = f"客户 {customer.name} 的申报材料已全部审核通过"
+        else:
+            title = "材料退回通知"
+            content = f"客户 {customer.name} 的申报材料已被退回，需要补充"
+        create_notification(
+            db=db,
+            user_id=customer.assigned_salesman_id,
+            title=title,
+            content=content,
+            type="status_change",
+            related_type="application",
+            related_id=application_id,
+        )
+    admins = db.query(User).filter(User.role == "admin").all()
+    for admin in admins:
+        if overall_result == "通过":
+            title = "审核通过通知"
+            content = f"客户 {customer.name} 的申报材料已全部审核通过" if customer else "申报材料已全部审核通过"
+        else:
+            title = "材料退回通知"
+            content = f"客户 {customer.name} 的申报材料已被退回，需要补充" if customer else "申报材料已被退回，需要补充"
+        create_notification(
+            db=db,
+            user_id=admin.id,
+            title=title,
+            content=content,
+            type="status_change",
+            related_type="application",
+            related_id=application_id,
+        )
 
     db.commit()
     return {"message": "批量审核完成", "new_status": app.status}

@@ -20,16 +20,32 @@
         <el-upload
           ref="wordUploadRef"
           :before-upload="beforeWordUpload"
-          :show-file-list="true"
+          :show-file-list="false"
           :limit="1"
           :auto-upload="false"
           accept=".docx"
           :on-change="handleWordChange"
         >
-          <el-button type="success">
-            <el-icon><Upload /></el-icon> 选择已填写的 Word 文件
-          </el-button>
+          <template #trigger>
+            <el-button type="success">
+              <el-icon><Upload /></el-icon> 选择已填写的 Word 文件
+            </el-button>
+          </template>
         </el-upload>
+        <el-input
+          v-if="!wordFile"
+          class="file-input-placeholder"
+          placeholder="请选择一个 .docx 文件"
+          :disabled="true"
+          :suffix-icon="null"
+        />
+        <el-input
+          v-if="wordFile"
+          class="file-input-value"
+          :model-value="wordFile.name"
+          :disabled="true"
+          :prefix-icon="null"
+        />
         <el-button type="warning" @click="submitWord" :loading="wordLoading">
           <el-icon><Check /></el-icon> 开始解析导入
         </el-button>
@@ -49,32 +65,44 @@
           Excel 格式要求：第一行为列名，必须包含「客户姓名」「身份证号」，可选「手机号」「学历」「现职称」「工作单位」「岗位」
         </template>
       </el-alert>
-      <el-upload
-        ref="uploadRef"
-        :action="`${apiBase}/api/imports/customers`"
-        :data="{}"
-        :before-upload="beforeUpload"
-        :on-success="handleSuccess"
-        :on-error="handleError"
-        :show-file-list="true"
-        :limit="1"
-        :auto-upload="false"
-        accept=".xlsx,.xls"
-      >
-        <template #trigger>
-          <el-button type="primary">
-            <el-icon><FolderOpened /></el-icon> 选择文件
-          </el-button>
-        </template>
-        <el-button style="margin-left: 12px" type="success" @click="submitUpload">
-          <el-icon><Upload /></el-icon> 开始导入
+      <div class="excel-actions">
+        <el-button type="primary" @click="downloadExcelTemplate">
+          <el-icon><Download /></el-icon> 下载 Excel 模板
         </el-button>
-        <template #tip>
-          <div class="el-upload__tip">仅支持 .xlsx / .xls 文件</div>
-        </template>
-      </el-upload>
+        <el-upload
+          ref="excelUploadRef"
+          :before-upload="beforeUpload"
+          :show-file-list="false"
+          :limit="1"
+          :auto-upload="false"
+          accept=".xlsx,.xls"
+          :on-change="handleExcelChange"
+        >
+          <template #trigger>
+            <el-button type="success">
+              <el-icon><Upload /></el-icon> 选择已填写的 Excel 文件
+            </el-button>
+          </template>
+        </el-upload>
+        <el-input
+          v-if="!excelFile"
+          class="file-input-placeholder"
+          placeholder="请选择一个 .xlsx / .xls 文件"
+          :disabled="true"
+          :suffix-icon="null"
+        />
+        <el-input
+          v-if="excelFile"
+          class="file-input-value"
+          :model-value="excelFile.name"
+          :disabled="true"
+          :prefix-icon="null"
+        />
+        <el-button type="warning" @click="submitUpload" :loading="loading">
+          <el-icon><Check /></el-icon> 开始解析导入
+        </el-button>
+      </div>
     </el-card>
-
     <el-card v-if="result" class="result-card" :class="{ success: result.success > 0, error: result.errors?.length > 0 }">
       <template #header>
         <div class="card-header">
@@ -117,13 +145,13 @@ import { ref } from 'vue'
 import api from '../api'
 import { ElMessage } from 'element-plus'
 
-const apiBase = ''
-const uploadRef = ref<any>(null)
 const wordUploadRef = ref<any>(null)
+const excelUploadRef = ref<any>(null)
 const wordFile = ref<File | null>(null)
+const excelFile = ref<File | null>(null)
 const wordLoading = ref(false)
-const result = ref<any>(null)
 const loading = ref(false)
+const result = ref<any>(null)
 
 // Word 模板相关
 function downloadTemplate() {
@@ -167,42 +195,44 @@ async function submitWord() {
 }
 
 // Excel 相关
+function downloadExcelTemplate() {
+  window.open('/api/exports/template', '_blank')
+}
+
 function beforeUpload(file: File) {
   const ext = file.name.split('.').pop()?.toLowerCase()
   if (!ext || !['xlsx', 'xls'].includes(ext)) {
     ElMessage.warning('仅支持 .xlsx / .xls 文件')
     return false
   }
-  loading.value = true
   return true
 }
 
+function handleExcelChange(file: any) {
+  excelFile.value = file.raw
+}
+
 async function submitUpload() {
-  if (!uploadRef.value) return
-  const files = (uploadRef.value as any).uploadFiles
-  if (!files.length) {
-    ElMessage.warning('请先选择文件')
+  if (!excelFile.value) {
+    ElMessage.warning('请先选择 Excel 文件')
     return
   }
-  const file = files[0].raw
+  loading.value = true
   const formData = new FormData()
-  formData.append('file', file)
+  formData.append('file', excelFile.value)
   try {
     const { data } = await api.post('/api/imports/customers', formData)
     result.value = data
     ElMessage.success(data.message || '导入完成')
+    excelFile.value = null
+    if (excelUploadRef.value) {
+      (excelUploadRef.value as any).clearFiles()
+    }
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '导入失败')
+  } finally {
+    loading.value = false
   }
-}
-
-function handleSuccess(resp: any) {
-  result.value = resp
-  loading.value = false
-}
-
-function handleError() {
-  loading.value = false
 }
 
 async function doExport(type: string) {
@@ -222,7 +252,7 @@ async function doExport(type: string) {
 
 <style scoped>
 .import-page {
-  max-width: 720px;
+  width: 100%;
 }
 .import-card, .result-card {
   margin-bottom: 16px;
@@ -234,31 +264,26 @@ async function doExport(type: string) {
   gap: 8px;
   font-weight: 600;
 }
-.word-actions {
+.word-actions,
+.excel-actions {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
 }
 
-.word-actions :deep(.el-upload) {
+.word-actions :deep(.el-upload),
+.excel-actions :deep(.el-upload) {
   display: inline-flex;
   align-items: center;
 }
-.result-card.success {
-  border-color: #22c55e;
-}
-.result-card.error {
-  border-color: #ef4444;
-}
-.error-detail {
-  font-size: 13px;
-  color: #dc2626;
-  white-space: pre-wrap;
-  max-height: 300px;
-  overflow-y: auto;
-  background: #fef2f2;
-  padding: 12px;
-  border-radius: 8px;
+
+.word-actions .file-input-placeholder,
+.word-actions .file-input-value,
+.excel-actions .file-input-placeholder,
+.excel-actions .file-input-value {
+  flex: 1 1 180px;
+  min-width: 140px;
+  max-width: 320px;
 }
 </style>
