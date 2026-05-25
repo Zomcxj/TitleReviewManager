@@ -23,22 +23,6 @@
       </div>
     </div>
 
-    <!-- Issues Panel -->
-    <div v-if="flaggedIssues.length" class="issues-panel">
-      <div class="issues-header">
-        <el-icon color="#ef4444"><WarningFilled /></el-icon>
-        <span>待处理问题（{{ flaggedIssues.length }} 项）</span>
-      </div>
-      <div v-for="issue in flaggedIssues" :key="issue.id" class="issue-item">
-        <el-tag type="danger" size="small" round>{{ issue.category }}</el-tag>
-        <span class="issue-file">{{ issue.filename }}</span>
-        <span class="issue-desc">{{ issue.description }}</span>
-        <el-tag v-if="issue.issue_type" type="warning" size="small" round>{{ issue.issue_type }}</el-tag>
-      </div>
-    </div>
-
-    <!-- Main layout: file list + tree sidebar -->
-    <div class="material-layout">
       <!-- Left: material grid -->
       <div class="material-main">
         <div class="material-grid" v-if="groupedMaterials.length">
@@ -73,7 +57,13 @@
                   <el-tag v-if="item === group.items[group.items.length - 1]" size="small" type="success" round class="latest-tag">最新</el-tag>
                 </div>
                 <div class="file-status">
-                  <el-tag :type="auditType(item.audit_status)" size="small" round>{{ item.audit_status }}</el-tag>
+                  <el-tag
+                    :type="auditType(item.audit_status)"
+                    size="small"
+                    round
+                    :class="{ 'clickable-tag': item.audit_status === '已标记问题' }"
+                    @click="item.audit_status === '已标记问题' ? showRejectDetail(item) : undefined"
+                  >{{ item.audit_status }}</el-tag>
                 </div>
                 <div class="file-actions">
                   <el-button type="primary" text size="small" @click="downloadFile(item.id)">
@@ -90,13 +80,14 @@
         <el-empty v-if="!loading && !materials.length" description="暂无材料，请上传" :image-size="80" />
       </div>
 
-      <!-- Right: file tree sidebar -->
-      <div class="material-sidebar" v-if="fileTree.length">
+      <!-- Right: file tree sidebar - always show -->
+      <div class="material-sidebar">
         <div class="sidebar-title">
           <el-icon><FolderOpened /></el-icon>
-          <span>NAS 文件目录</span>
+          <span>文件目录</span>
         </div>
         <el-tree
+          v-if="fileTree.length"
           :data="fileTree"
           :props="{ children: 'children', label: 'name' }"
           node-key="path"
@@ -104,8 +95,37 @@
           highlight-current
           @node-click="handleTreeNodeClick"
         />
-      </div>
+        <div v-else class="sidebar-empty">
+          <el-icon size="24" color="#94a3b8"><Folder /></el-icon>
+          <span>暂无文件目录</span>
+        </div>
     </div>
+
+    <!-- Reject detail dialog -->
+    <el-dialog v-model="rejectDetailVisible" title="退回原因" width="480px" destroy-on-close>
+      <div v-if="rejectDetailItem" style="padding: 8px 0">
+        <div style="margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+          <el-tag size="small">{{ rejectDetailItem.category }}</el-tag>
+          <span style="font-weight: 500; color: #1e293b;">{{ rejectDetailItem.filename }}</span>
+        </div>
+        <div v-if="rejectDetailData.issue_type" style="margin-bottom: 10px;">
+          <span style="color: #64748b; font-size: 13px;">问题类型：</span>
+          <el-tag type="warning" size="small" round>{{ rejectDetailData.issue_type }}</el-tag>
+        </div>
+        <div v-if="rejectDetailData.description" style="background: #f8fafc; border-radius: 8px; padding: 12px; font-size: 14px; color: #334155; line-height: 1.6;">
+          {{ rejectDetailData.description }}
+        </div>
+        <div v-if="!rejectDetailData.issue_type && !rejectDetailData.description" style="color: #94a3b8; font-size: 13px;">
+          暂无详细退回说明
+        </div>
+        <div v-if="rejectDetailData.reviewer" style="margin-top: 10px; font-size: 12px; color: #94a3b8;">
+          审核员：{{ rejectDetailData.reviewer }} · {{ rejectDetailData.date }}
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="rejectDetailVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <!-- Image preview dialog -->
     <el-dialog v-model="previewVisible" :title="previewMaterial?.filename || '预览'" width="90%" destroy-on-close class="preview-dialog" top="3vh" :close-on-click-modal="true">
@@ -139,6 +159,9 @@ const previewVisible = ref(false)
 const previewSrc = ref('')
 const previewType = ref<'image' | 'pdf' | ''>('')
 const previewMaterial = ref<any>(null)
+const rejectDetailVisible = ref(false)
+const rejectDetailItem = ref<any>(null)
+const rejectDetailData = ref<any>({})
 
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 const PDF_EXTS = ['.pdf']
@@ -156,14 +179,21 @@ const groupedMaterials = computed(() => {
   }))
 })
 
-const flaggedIssues = computed(() => {
-  return materials.value
-    .filter(m => m.audit_status === '已标记问题')
-    .map(m => {
-      const relatedReview = reviews.value.find(r => r.material_id === m.id && r.result === '退回')
-      return { ...m, description: relatedReview?.description || '', issue_type: relatedReview?.issue_type || '' }
-    })
-})
+function showRejectDetail(item: any) {
+  rejectDetailItem.value = item
+  const relatedReview = reviews.value.find((r: any) => r.material_id === item.id && r.result === '退回')
+  if (relatedReview) {
+    rejectDetailData.value = {
+      issue_type: relatedReview.issue_type || '',
+      description: relatedReview.description || '',
+      reviewer: relatedReview.reviewer_id ? `审核员 #${relatedReview.reviewer_id}` : '',
+      date: relatedReview.created_at ? new Date(relatedReview.created_at).toLocaleString('zh-CN') : '',
+    }
+  } else {
+    rejectDetailData.value = { issue_type: '', description: '', reviewer: '', date: '' }
+  }
+  rejectDetailVisible.value = true
+}
 
 function auditType(status: string) {
   const map: Record<string, string> = { '待审核': 'info', '已通过': 'success', '已标记问题': 'danger' }
@@ -191,7 +221,23 @@ async function loadMaterials() {
   try {
     const { data } = await api.get(`/api/applications/${props.applicationId}/materials/`)
     materials.value = data.items || []
-    fileTree.value = data.tree || []
+    // 转换后端树格式为 el-tree 格式
+    const rawTree = data.tree || []
+    if (rawTree.length && rawTree[0].category !== undefined) {
+      // 后端格式: [{category, files: [{name, path, size, modified}]}]
+      // 转换为: [{name, path, children: [{name, path, isLeaf}]}]
+      fileTree.value = rawTree.map((cat: any) => ({
+        name: cat.category,
+        path: cat.category,
+        children: (cat.files || []).map((f: any) => ({
+          name: f.name,
+          path: f.path,
+          isLeaf: true,
+        })),
+      }))
+    } else {
+      fileTree.value = rawTree
+    }
     const { data: reviewData } = await api.get(`/api/reviews/application/${props.applicationId}`)
     reviews.value = reviewData
   } finally {
@@ -442,7 +488,8 @@ watch(() => props.applicationId, loadMaterials, { immediate: true })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 200px;
+  min-width: 0;
+  flex: 1;
   cursor: pointer;
 }
 .file-name:hover {
@@ -463,6 +510,14 @@ watch(() => props.applicationId, loadMaterials, { immediate: true })
 }
 .file-status {
   flex-shrink: 0;
+}
+.clickable-tag {
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.clickable-tag:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 0 2px rgba(239,68,68,0.3);
 }
 .file-actions {
   display: flex;

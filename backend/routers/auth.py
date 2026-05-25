@@ -46,8 +46,6 @@ async def login(req: LoginRequest, request: Request, db: Session = Depends(get_d
 
     # 5. Reset failed login counter on success
     reset_failed_login(req.username)
-    record_attempt(client_ip)
-
     token = create_access_token({"user_id": user.id, "id": user.id, "username": user.username, "role": user.role})
     user_dict = UserResponse.model_validate(user).model_dump(mode="json")
     response_data = {"message": "登录成功", "user": user_dict}

@@ -27,7 +27,6 @@ class LoginRequest(BaseModel):
 class UserResponse(BaseModel):
     id: int
     username: str
-    password: Optional[str] = None
     role: str
     real_name: Optional[str] = None
     created_at: Optional[datetime] = None

@@ -51,19 +51,13 @@
                 <span class="review-batch">{{ selectedApp.batch_number || selectedApp.batch }}</span>
               </div>
               <div v-if="materials.length" class="review-actions">
-                <el-button type="success" size="small" @click="handleBatchApprove">
-                  <el-icon><Select /></el-icon> 全部通过
-                </el-button>
-                <el-button type="danger" size="small" @click="handleBatchReject">
-                  <el-icon><CircleCloseFilled /></el-icon> 退回标记
-                </el-button>
+                <span class="review-hint">逐项审核：通过或退回每份材料</span>
               </div>
             </div>
           </template>
 
-          <el-table :data="materials" @selection-change="onSelectionChange" style="width: 100%"
+          <el-table :data="materials" style="width: 100%"
             v-loading="loadingMaterials" row-key="id">
-            <el-table-column type="selection" width="44" />
             <el-table-column label="类型" width="110">
               <template #default="{ row }">
                 <el-tag size="small" effect="plain">{{ row.category }}</el-tag>
@@ -79,10 +73,11 @@
                 <el-tag :type="auditType(row.audit_status)" size="small" round>{{ row.audit_status }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="140">
+            <el-table-column label="操作" width="200">
               <template #default="{ row }">
                 <el-button type="primary" text size="small" @click="downloadFile(row.id)">下载</el-button>
-                <el-button type="warning" text size="small" @click="showReviewDialog(row)">标记</el-button>
+                <el-button type="success" text size="small" @click="handleSingleApprove(row)">通过</el-button>
+                <el-button type="danger" text size="small" @click="handleSingleReject(row)">退回</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -103,7 +98,7 @@
       </el-col>
     </el-row>
 
-    <el-dialog v-model="reviewDialogVisible" :title="currentMaterial ? `标记问题` : '标记问题'" width="480px">
+    <el-dialog v-model="reviewDialogVisible" title="退回材料" width="480px">
       <div v-if="currentMaterial" class="dialog-material-info">
         <el-tag size="small">{{ currentMaterial.category }}</el-tag>
         <span class="dialog-filename">{{ currentMaterial.filename }}</span>
@@ -125,24 +120,11 @@
       </el-form>
       <template #footer>
         <el-button @click="reviewDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitReview">提交标记</el-button>
+        <el-button type="danger" @click="submitReview">确认退回</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="rejectDialogVisible" title="批量退回标记" width="480px">
-      <el-alert :title="`已选择 ${selectedMaterials.length} 项材料`" type="warning" :closable="false"
-        style="margin-bottom: 16px" />
-      <el-form label-position="top">
-        <el-form-item label="退回说明">
-          <el-input v-model="rejectReason" type="textarea" :rows="4"
-            placeholder="请输入退回原因及修改要求，将应用于所有已选材料" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="rejectDialogVisible = false">取消</el-button>
-        <el-button type="danger" @click="submitBatchReject">确认退回</el-button>
-      </template>
-    </el-dialog>
+
   </div>
 </template>
 
@@ -173,12 +155,9 @@ const pendingApps = ref<any[]>([])
 const materials = ref<any[]>([])
 const selectedApp = ref<any>(null)
 const selectedAppReviews = ref<any[]>([])
-const selectedMaterials = ref<any[]>([])
 const reviewDialogVisible = ref(false)
-const rejectDialogVisible = ref(false)
 const currentMaterial = ref<any>(null)
 const reviewForm = ref({ issue_type: '', description: '' })
-const rejectReason = ref('')
 const filterStatus = ref('')
 
 function statusType(s: string) {
@@ -214,16 +193,16 @@ async function selectApp(app: any) {
   loadingMaterials.value = true
   try {
     const { data } = await api.get(`/api/applications/${appId}/materials/`)
-    materials.value = data.items || data
+    const allMats = data.items || data
+    // 只显示待审核的材料（已通过/已退回的不显示）
+    materials.value = (Array.isArray(allMats) ? allMats : []).filter(
+      (m: any) => !m.audit_status || m.audit_status === '待审核' || m.audit_status === ''
+    )
     const { data: reviewData } = await api.get(`/api/reviews/application/${appId}`)
     selectedAppReviews.value = reviewData
   } finally {
     loadingMaterials.value = false
   }
-}
-
-function onSelectionChange(selection: any[]) {
-  selectedMaterials.value = selection
 }
 
 function downloadFile(materialId: number) {
@@ -237,9 +216,39 @@ function showReviewDialog(material: any) {
   reviewDialogVisible.value = true
 }
 
+async function handleSingleApprove(material: any) {
+  const appId = selectedApp.value.application_id || selectedApp.value.id
+  try {
+    const formData = new FormData()
+    formData.append('material_id', String(material.id))
+    formData.append('application_id', String(appId))
+    formData.append('result', '通过')
+    formData.append('description', '审核通过')
+    await api.post('/api/reviews/', formData)
+    ElMessage.success('已通过')
+    // 从材料列表移除
+    materials.value = materials.value.filter((m: any) => m.id !== material.id)
+    // 如果没有材料了，从待审核列表移除
+    if (!materials.value.length) {
+      pendingApps.value = pendingApps.value.filter(
+        (app: any) => (app.id || app.application_id) !== appId
+      )
+      selectedApp.value = null
+    }
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  }
+}
+
+function handleSingleReject(material: any) {
+  currentMaterial.value = material
+  reviewForm.value = { issue_type: '', description: '' }
+  reviewDialogVisible.value = true
+}
+
 async function submitReview() {
   if (!reviewForm.value.description) {
-    ElMessage.warning('请填写问题说明')
+    ElMessage.warning('请填写退回说明')
     return
   }
   const formData = new FormData()
@@ -251,108 +260,16 @@ async function submitReview() {
   formData.append('description', reviewForm.value.description)
   try {
     await api.post('/api/reviews/', formData)
-    ElMessage.success('已标记问题')
+    ElMessage.success('已退回')
     reviewDialogVisible.value = false
-    // 本地更新材料状态，避免重载左侧列表导致UI闪烁缩短
-    if (currentMaterial.value) {
-      currentMaterial.value.audit_status = '已标记问题'
-    }
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail || '操作失败')
-  }
-}
-
-async function handleBatchApprove() {
-  if (!materials.value.length) {
-    ElMessage.warning('暂无可审核的材料')
-    return
-  }
-  const appId = selectedApp.value.application_id || selectedApp.value.id
-  const targets = selectedMaterials.value.length ? selectedMaterials.value : materials.value
-  const isPartial = selectedMaterials.value.length > 0 && selectedMaterials.value.length < materials.value.length
-  try {
-    await api.post(`/api/reviews/batch-review`, {
-      application_id: appId,
-      overall_result: '通过',
-      review_details: targets.map((m: any) => ({
-        material_id: m.id,
-        description: '审核通过',
-      })),
-      description: '批量审核通过',
-    })
-    ElMessage.success(`已通过 ${targets.length} 项材料`)
-    // 本地更新材料状态
-    targets.forEach((m: any) => { m.audit_status = '已通过' })
-    selectedMaterials.value = []
-    if (isPartial) {
-      // 部分通过：不清除，让审核员继续审核剩余材料
-      const remaining = materials.value.filter((m: any) => m.audit_status !== '已通过')
-      if (!remaining.length) {
-        // 全都通过了，移除
-        pendingApps.value = pendingApps.value.filter(
-          (app: any) => (app.id || app.application_id) !== appId
-        )
-        selectedApp.value = null
-        materials.value = []
-      } else {
-        ElMessage.info(`还有 ${remaining.length} 项材料待审核`)
-      }
-    } else {
-      // 全部通过，从待审核列表中移除
+    // 从材料列表移除
+    materials.value = materials.value.filter((m: any) => m.id !== currentMaterial.value.id)
+    // 如果没有材料了，从待审核列表移除
+    if (!materials.value.length) {
       pendingApps.value = pendingApps.value.filter(
         (app: any) => (app.id || app.application_id) !== appId
       )
       selectedApp.value = null
-      materials.value = []
-    }
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail || '操作失败')
-  }
-}
-
-function handleBatchReject() {
-  if (!materials.value.length) {
-    ElMessage.warning('暂无可审核的材料')
-    return
-  }
-  rejectReason.value = ''
-  rejectDialogVisible.value = true
-}
-
-async function submitBatchReject() {
-  if (!rejectReason.value) {
-    ElMessage.warning('请填写退回说明')
-    return
-  }
-  const appId = selectedApp.value.application_id || selectedApp.value.id
-  const targets = selectedMaterials.value.length ? selectedMaterials.value : materials.value
-  const isPartial = selectedMaterials.value.length > 0 && selectedMaterials.value.length < materials.value.length
-  try {
-    await api.post(`/api/reviews/batch-review`, {
-      application_id: appId,
-      overall_result: '退回',
-      review_details: targets.map((m: any) => ({
-        material_id: m.id,
-        issue_type: '需要补充/修改',
-        description: rejectReason.value,
-      })),
-      description: rejectReason.value,
-    })
-    rejectDialogVisible.value = false
-    // 本地更新材料状态
-    targets.forEach((m: any) => { m.audit_status = '已标记问题' })
-    selectedMaterials.value = []
-    if (isPartial) {
-      // 部分退回：不清除列表，让审核员继续审核剩余材料
-      ElMessage.success(`已退回 ${targets.length} 项材料，还有 ${materials.value.filter(m => m.audit_status !== '已标记问题').length} 项继续审核`)
-    } else {
-      // 全部退回：移除待审核列表
-      ElMessage.success(`已退回 ${targets.length} 项材料`)
-      pendingApps.value = pendingApps.value.filter(
-        (app: any) => (app.id || app.application_id) !== appId
-      )
-      selectedApp.value = null
-      materials.value = []
     }
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '操作失败')

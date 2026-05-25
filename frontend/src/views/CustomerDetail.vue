@@ -15,8 +15,11 @@
         <el-button v-if="isSalesman" type="warning" @click="showTransferDialog = true">
           <el-icon><Switch /></el-icon> 转让客户
         </el-button>
-        <el-button v-if="isSalesman && currentApp" :type="submitBtnType" @click="handleSubmitClick" :disabled="submitBtnDisabled">
-          <el-icon><component :is="submitBtnIcon" /></el-icon> {{ submitBtnText }}
+        <el-button v-if="canSubmitReview" type="success" @click="handleReadyForReview">
+          <el-icon><Check /></el-icon> 提交审核员审核
+        </el-button>
+        <el-button v-if="canSubmitToInstitution" type="primary" @click="showSubmitDialog = true">
+          <el-icon><Upload /></el-icon> 提交评审机构
         </el-button>
         <el-button v-if="canRecordFeedback" @click="showFeedbackDialog = true">
           <el-icon><ChatDotRound /></el-icon> 录入反馈
@@ -202,6 +205,7 @@ const customer = ref<any>(null)
 const applications = ref<any[]>([])
 const reviews = ref<any[]>([])
 const logs = ref<any[]>([])
+const materials = ref<any[]>([])
 const activeTab = ref('basic')
 const currentAppId = ref<number | null>(null)
 
@@ -233,37 +237,13 @@ const canSubmitReview = computed(() => {
   return isSalesman.value && currentApp.value && ['初次申报', '资料补充', '二次申报'].includes(currentApp.value.status)
 })
 const canSubmitToInstitution = computed(() => {
-  return isSalesman.value && currentApp.value?.status === '完成资料'
+  if (!isSalesman.value || !currentApp.value) return false
+  // 只有所有材料都已通过时才显示"提交评审机构"
+  if (materials.value.length === 0) return false
+  return materials.value.every((m: any) => m.audit_status === '已通过')
 })
 
-const submitBtnText = computed(() => {
-  if (!currentApp.value) return ''
-  if (currentApp.value.status === '完成资料') return '提交评审机构'
-  return '提交审核员审核'
-})
-const submitBtnType = computed(() => {
-  if (!currentApp.value) return 'default'
-  if (currentApp.value.status === '完成资料') return 'primary'
-  return 'success'
-})
-const submitBtnIcon = computed(() => {
-  if (!currentApp.value) return 'Check'
-  if (currentApp.value.status === '完成资料') return 'Upload'
-  return 'Check'
-})
-const submitBtnDisabled = computed(() => {
-  if (!currentApp.value) return true
-  if (currentApp.value.status === '完成资料') return false
-  return false
-})
 
-function handleSubmitClick() {
-  if (currentApp.value?.status === '完成资料') {
-    showSubmitDialog.value = true
-  } else {
-    handleReadyForReview()
-  }
-}
 const canRecordFeedback = computed(() => {
   return isSalesman.value && currentApp.value?.status === '提交评审机构审核'
 })
@@ -306,6 +286,10 @@ onMounted(() => {
           applications.value = data.applications
         }
       }).catch(() => {})
+      // 同步刷新材料状态以更新按钮
+      if (currentAppId.value) {
+        loadMaterials(currentAppId.value)
+      }
     }
   }, 10000)
 })
@@ -321,6 +305,7 @@ async function loadData() {
     applications.value = data.applications || []
     if (applications.value.length && !currentAppId.value) {
       currentAppId.value = applications.value[0].id
+      loadMaterials(applications.value[0].id)
     }
     // 初始化报考职称输入框
     inlineTargetTitle.value = data.target_title || ''
@@ -333,6 +318,16 @@ function selectApp(app: any) {
   currentAppId.value = app.id
   reviews.value = []
   logs.value = []
+  loadMaterials(app.id)
+}
+
+async function loadMaterials(appId: number) {
+  try {
+    const { data } = await api.get(`/api/applications/${appId}/materials/`)
+    materials.value = data.items || []
+  } catch {
+    materials.value = []
+  }
 }
 
 async function loadReviews(appId: number) {

@@ -85,7 +85,7 @@ async def create_review(
     db.refresh(review)
 
     # 取材料名称供通知使用
-    material_name = material.name if material_id and material else ""
+    material_name = material.category if material_id and material else ""
 
     # 单条退回/通过时发送通知给业务员和管理员
     if application_id and result in ("退回", "通过") and material_id:

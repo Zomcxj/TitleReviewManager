@@ -13,12 +13,12 @@ const routes: RouteRecordRaw[] = [
       { path: 'dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue') },
       { path: 'customers', name: 'CustomerList', component: () => import('../views/CustomerList.vue') },
       { path: 'customers/:id', name: 'CustomerDetail', component: () => import('../views/CustomerDetail.vue') },
-      { path: 'reviews', name: 'ReviewWorkspace', component: () => import('../views/ReviewWorkspace.vue') },
-      { path: 'registration-links', name: 'RegistrationLinks', component: () => import('../views/RegistrationLinks.vue') },
-      { path: 'audit-logs', name: 'AuditLog', component: () => import('../views/AuditLog.vue') },
-      { path: 'users', name: 'UserList', component: () => import('../views/UserList.vue') },
-      { path: 'import', name: 'CustomerImport', component: () => import('../views/CustomerImport.vue') },
-      { path: 'transfer', name: 'CustomerTransfer', component: () => import('../views/CustomerTransfer.vue') },
+      { path: 'reviews', name: 'ReviewWorkspace', component: () => import('../views/ReviewWorkspace.vue'), meta: { roles: ['admin', 'reviewer'] } },
+      { path: 'registration-links', name: 'RegistrationLinks', component: () => import('../views/RegistrationLinks.vue'), meta: { roles: ['admin', 'salesman'] } },
+      { path: 'audit-logs', name: 'AuditLog', component: () => import('../views/AuditLog.vue'), meta: { roles: ['admin'] } },
+      { path: 'users', name: 'UserList', component: () => import('../views/UserList.vue'), meta: { roles: ['admin'] } },
+      { path: 'import', name: 'CustomerImport', component: () => import('../views/CustomerImport.vue'), meta: { roles: ['admin', 'salesman'] } },
+      { path: 'transfer', name: 'CustomerTransfer', component: () => import('../views/CustomerTransfer.vue'), meta: { roles: ['admin'] } },
     ],
   },
   { path: '/:pathMatch(.*)*', name: 'NotFound', component: () => import('../views/NotFound.vue') },
@@ -34,12 +34,20 @@ router.beforeEach((to, _from, next) => {
     const token = localStorage.getItem('access_token')
     if (!token) {
       next('/login')
-    } else {
-      next()
+      return
     }
-  } else {
-    next()
+    // 角色权限检查
+    const requiredRoles = to.meta.roles as string[] | undefined
+    if (requiredRoles && requiredRoles.length > 0) {
+      const userStr = localStorage.getItem('user_role')
+      const userRole = userStr || ''
+      if (!requiredRoles.includes(userRole)) {
+        next('/admin/dashboard')
+        return
+      }
+    }
   }
+  next()
 })
 
 export default router

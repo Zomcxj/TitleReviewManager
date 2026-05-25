@@ -18,7 +18,8 @@ def admin_only(user: dict):
 async def list_users(request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
     admin_only(user)
-    return db.query(User).order_by(User.id).all()
+    users = db.query(User).order_by(User.id).all()
+    return [UserResponse.model_validate(u).model_dump(mode="json") for u in users]
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -97,5 +98,48 @@ async def change_password(data: PasswordChange, request: Request, db: Session = 
     if not verify_password(data.old_password, u.password_hash):
         raise HTTPException(status_code=400, detail="原密码错误")
     u.password_hash = hash_password(data.new_password)
+    db.commit()
+    return {"message": "密码已修改"}
+
+
+@router.post("/verify-admin-password")
+async def verify_admin_password(data: dict, request: Request, db: Session = Depends(get_db)):
+    user = await get_current_user(request)
+    admin_only(user)
+    password = data.get("password", "")
+    target_user_id = data.get("user_id")
+    # 验证当前管理员密码
+    u = db.query(User).filter(User.id == user.get("user_id")).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not verify_password(password, u.password_hash):
+        raise HTTPException(status_code=400, detail="管理员密码错误")
+    # 返回目标用户的明文密码
+    target = db.query(User).filter(User.id == target_user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+    return {"password": target.password or ""}
+
+
+@router.post("/{user_id}/reset-password")
+async def reset_user_password(user_id: int, data: dict, request: Request, db: Session = Depends(get_db)):
+    user = await get_current_user(request)
+    admin_only(user)
+    # 验证管理员密码
+    admin = db.query(User).filter(User.id == user.get("user_id")).first()
+    if not admin:
+        raise HTTPException(status_code=404, detail="管理员不存在")
+    admin_password = data.get("admin_password", "")
+    if not verify_password(admin_password, admin.password_hash):
+        raise HTTPException(status_code=400, detail="管理员密码错误")
+    # 修改目标用户密码
+    new_password = data.get("new_password", "")
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="新密码至少6位")
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+    target.password_hash = hash_password(new_password)
+    target.password = new_password
     db.commit()
     return {"message": "密码已修改"}

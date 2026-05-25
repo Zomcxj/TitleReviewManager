@@ -6,11 +6,6 @@
           <el-icon><Plus /></el-icon> 新增用户
         </el-button>
       </div>
-      <div class="toolbar-right">
-        <el-button @click="showPasswordDialog = true">
-          <el-icon><Key /></el-icon> 修改密码
-        </el-button>
-      </div>
     </div>
 
     <el-table :data="users" border stripe v-loading="loading" style="width: 100%">
@@ -28,16 +23,23 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="password" label="密码" min-width="120" />
+      <el-table-column label="密码" min-width="120">
+        <template #default>
+          ******
+        </template>
+      </el-table-column>
       <el-table-column prop="created_at" label="创建时间" min-width="170">
         <template #default="{ row }">
           {{ formatDate(row.created_at) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="200" align="center" fixed="right">
+      <el-table-column label="操作" width="260" align="center" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" text size="small" @click="handleEdit(row)">
             <el-icon><Edit /></el-icon> 编辑
+          </el-button>
+          <el-button type="warning" text size="small" @click="openPasswordDialog(row)">
+            <el-icon><Key /></el-icon> 改密
           </el-button>
           <el-button type="danger" text size="small" @click="handleDelete(row)" :disabled="row.id === currentUserId">
             <el-icon><Delete /></el-icon> 删除
@@ -73,7 +75,7 @@
     </el-dialog>
 
     <!-- Edit User Dialog -->
-    <el-dialog v-model="showEditDialog" title="编辑用户" width="480px">
+    <el-dialog v-model="showEditDialog" title="编辑用户" width="480px" @close="resetEditVerification">
       <el-form :model="editForm" label-position="top">
         <el-form-item label="用户名">
           <el-input v-model="editForm.username" />
@@ -88,8 +90,18 @@
         <el-form-item label="姓名">
           <el-input v-model="editForm.real_name" />
         </el-form-item>
-        <el-form-item label="新密码（留空不修改）">
-          <el-input v-model="editForm.password" type="password" show-password placeholder="留空则不修改密码" />
+        <el-form-item label="密码">
+          <div v-if="!adminPasswordVerified" class="password-locked">
+            <el-input model-value="******" disabled />
+            <el-button type="primary" text @click="showVerifyInput = true" style="margin-top: 8px">
+              <el-icon><Key /></el-icon> 输入管理员密码查看
+            </el-button>
+            <div v-if="showVerifyInput" style="margin-top: 8px; display: flex; gap: 8px">
+              <el-input v-model="adminPassword" type="password" show-password placeholder="输入当前管理员密码" style="flex: 1" />
+              <el-button type="primary" @click="verifyAdminPassword" :loading="verifyingPassword">验证</el-button>
+            </div>
+          </div>
+          <el-input v-else v-model="editForm.password" type="password" show-password placeholder="留空则不修改密码" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -98,11 +110,11 @@
       </template>
     </el-dialog>
 
-    <!-- Password Change Dialog -->
-    <el-dialog v-model="showPasswordDialog" title="修改密码" width="400px">
+    <!-- Reset Password Dialog -->
+    <el-dialog v-model="showPasswordDialog" :title="`修改密码 - ${pwTargetUser?.username || ''}`" width="400px">
       <el-form :model="pwForm" label-position="top">
-        <el-form-item label="原密码">
-          <el-input v-model="pwForm.old_password" type="password" show-password />
+        <el-form-item label="管理员密码">
+          <el-input v-model="pwForm.admin_password" type="password" show-password placeholder="输入当前管理员密码以确认" />
         </el-form-item>
         <el-form-item label="新密码">
           <el-input v-model="pwForm.new_password" type="password" show-password placeholder="至少6位" />
@@ -110,7 +122,7 @@
       </el-form>
       <template #footer>
         <el-button @click="showPasswordDialog = false">取消</el-button>
-        <el-button type="primary" @click="handlePasswordChange" :loading="submitting">确认修改</el-button>
+        <el-button type="primary" @click="handleResetPassword" :loading="submitting">确认修改</el-button>
       </template>
     </el-dialog>
   </div>
@@ -129,11 +141,16 @@ const submitting = ref(false)
 const showCreateDialog = ref(false)
 const showEditDialog = ref(false)
 const showPasswordDialog = ref(false)
+const adminPasswordVerified = ref(false)
+const adminPassword = ref('')
+const showVerifyInput = ref(false)
+const verifyingPassword = ref(false)
 const currentUserId = computed(() => authStore.user?.id)
 
 const form = ref({ username: '', password: '', role: 'salesman', real_name: '' })
 const editForm = ref({ id: 0, username: '', role: '', real_name: '', password: '' })
-const pwForm = ref({ old_password: '', new_password: '' })
+const pwForm = ref({ admin_password: '', new_password: '' })
+const pwTargetUser = ref<any>(null)
 const formRef = ref<any>(null)
 
 const rules = {
@@ -186,8 +203,33 @@ async function handleCreate() {
   }
 }
 
+function resetEditVerification() {
+  adminPasswordVerified.value = false
+  adminPassword.value = ''
+  showVerifyInput.value = false
+}
+
+async function verifyAdminPassword() {
+  if (!adminPassword.value) {
+    ElMessage.warning('请输入管理员密码')
+    return
+  }
+  verifyingPassword.value = true
+  try {
+    const { data } = await api.post('/api/users/verify-admin-password', { password: adminPassword.value, user_id: editForm.value.id })
+    adminPasswordVerified.value = true
+    showVerifyInput.value = false
+    editForm.value.password = data.password || ''
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '密码验证失败')
+  } finally {
+    verifyingPassword.value = false
+  }
+}
+
 function handleEdit(row: any) {
   editForm.value = { id: row.id, username: row.username, role: row.role, real_name: row.real_name || '', password: '' }
+  resetEditVerification()
   showEditDialog.value = true
 }
 
@@ -218,8 +260,14 @@ async function handleDelete(row: any) {
   }
 }
 
-async function handlePasswordChange() {
-  if (!pwForm.value.old_password || !pwForm.value.new_password) {
+function openPasswordDialog(row: any) {
+  pwTargetUser.value = row
+  pwForm.value = { admin_password: '', new_password: '' }
+  showPasswordDialog.value = true
+}
+
+async function handleResetPassword() {
+  if (!pwForm.value.admin_password || !pwForm.value.new_password) {
     ElMessage.warning('请填写完整')
     return
   }
@@ -229,10 +277,12 @@ async function handlePasswordChange() {
   }
   submitting.value = true
   try {
-    await api.post('/api/users/change-password', pwForm.value)
+    await api.post(`/api/users/${pwTargetUser.value.id}/reset-password`, {
+      admin_password: pwForm.value.admin_password,
+      new_password: pwForm.value.new_password,
+    })
     ElMessage.success('密码已修改')
     showPasswordDialog.value = false
-    pwForm.value = { old_password: '', new_password: '' }
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '修改失败')
   } finally {
@@ -250,6 +300,9 @@ onMounted(loadUsers)
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.password-locked {
+  width: 100%;
 }
 .page-toolbar {
   display: flex;

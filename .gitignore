@@ -28,6 +28,7 @@ yarn-error.log*
 *.swp
 *.swo
 *~
+.atomcode/
 
 # OS
 .DS_Store
