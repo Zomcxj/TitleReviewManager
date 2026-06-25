@@ -21,16 +21,28 @@ cd frontend
 npm install
 ```
 
-### 3. 初始化数据库 & 种子数据
+### 3. 配置环境变量
+
+```bash
+# 复制示例文件并按需修改
+cp .env.example .env
+```
+
+### 4. 初始化数据库 & 种子数据
 
 ```bash
 cd backend
+
+# 运行数据库迁移
+alembic upgrade head
+
+# 填充种子数据
 python seed.py
 ```
 
 默认创建 5 个用户、8 个客户、9 个申报批次（含示例材料）。
 
-### 4. 启动服务
+### 5. 启动服务
 
 ```bash
 # 后端（端口 8000）

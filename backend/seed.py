@@ -8,21 +8,9 @@ import os
 from datetime import datetime, timedelta
 from sqlalchemy import text
 
-# Migration: add target_title column if not exists
-def migrate_add_target_title():
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE customers ADD COLUMN target_title VARCHAR(100)"))
-            conn.commit()
-            print("数据库迁移: 添加 target_title 字段")
-    except Exception as e:
-        if "duplicate column" in str(e).lower() or "already exists" in str(e).lower():
-            pass  # Column already exists
-        else:
-            print(f"迁移警告: {e}")
-
-migrate_add_target_title()
-Base.metadata.create_all(bind=engine)
+# 注意：数据库结构迁移现在由 Alembic 管理。
+# 请运行 alembic upgrade head 来更新数据库结构。
+# 本脚本仅用于填充种子数据。
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)

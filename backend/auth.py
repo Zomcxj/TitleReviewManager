@@ -6,7 +6,10 @@ from fastapi import Request, HTTPException
 from typing import Optional, Dict, List
 import time
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "title-review-platform-secret-key-2024-stable")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("环境变量 JWT_SECRET_KEY 未设置。请在 .env 文件或系统环境中配置它。")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480
 
