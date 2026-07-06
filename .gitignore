@@ -59,3 +59,4 @@ screenshots/
 nas_data/
 docs/nas-config.md
 test_e2e.js
+.octto/

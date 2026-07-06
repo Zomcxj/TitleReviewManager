@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, desc
 from database import get_db
-from models import Customer, User, Notification, FollowUp, Application
+from models import Customer, User, FollowUp, Application
 from schemas import CustomerResponse
 from auth import get_current_user
 from datetime import datetime, timezone, timedelta

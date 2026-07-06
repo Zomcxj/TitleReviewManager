@@ -47,7 +47,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import axios from 'axios'
+import api from '../api'
 
 interface Notification {
   id: number
@@ -67,7 +67,7 @@ let intervalId: ReturnType<typeof setInterval> | null = null
 async function fetchNotifications() {
   loading.value = true
   try {
-    const { data } = await axios.get('/api/notifications/', {
+    const { data } = await api.get('/api/notifications/', {
       params: { page: 1, page_size: 10 },
     })
     notifications.value = data.items
@@ -81,7 +81,7 @@ async function fetchNotifications() {
 
 async function markAsRead(id: number) {
   try {
-    await axios.post(`/api/notifications/read/${id}`)
+    await api.post(`/api/notifications/read/${id}`)
     const notif = notifications.value.find(n => n.id === id)
     if (notif) notif.is_read = true
     unreadCount.value = Math.max(0, unreadCount.value - 1)
@@ -92,7 +92,7 @@ async function markAsRead(id: number) {
 
 async function markAllAsRead() {
   try {
-    await axios.post('/api/notifications/read-all')
+    await api.post('/api/notifications/read-all')
     notifications.value.forEach(n => n.is_read = true)
     unreadCount.value = 0
   } catch (e) {

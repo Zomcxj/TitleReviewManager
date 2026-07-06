@@ -68,7 +68,7 @@ async def batch_review(
     current_user: dict = Depends(get_current_user),
 ):
     from models import Review
-    from schemas import VALID_TRANSITIONS
+    from enums import VALID_TRANSITIONS
     
     if current_user.get("role") not in ["reviewer", "admin"]:
         raise HTTPException(status_code=403, detail="只有审核员可以批量审核")

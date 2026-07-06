@@ -62,22 +62,3 @@ VALID_TRANSITIONS = {
     ApplicationStatus.REAPPLY: [ApplicationStatus.SUPPLEMENT, ApplicationStatus.COMPLETED],
     ApplicationStatus.APPROVED: [],  # 终态
 }
-
-# 文件上传配置
-ALLOWED_FILE_EXTENSIONS = {".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png"}
-ALLOWED_MIME_TYPES = {
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "image/jpeg",
-    "image/png",
-}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
-
-# 认证配置
-JWT_ALGORITHM = "HS256"
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 480
-MAX_LOGIN_ATTEMPTS = 5
-RATE_WINDOW_SECONDS = 300  # 5 minutes
-LOCKOUT_THRESHOLD = 5
-LOCKOUT_DURATION_SECONDS = 900  # 15 minutes

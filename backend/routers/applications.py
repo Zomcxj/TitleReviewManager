@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Application, Customer, OperationLog, Notification, User
-from schemas import ApplicationUpdate, ApplicationResponse, VALID_TRANSITIONS
+from models import Application, Customer, OperationLog, User
+from schemas import ApplicationUpdate, ApplicationResponse
+from enums import VALID_TRANSITIONS
 from auth import get_current_user
 from datetime import datetime, timezone
 import uuid

@@ -96,7 +96,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import axios from 'axios'
+import api from '../api'
 import { ElMessage } from 'element-plus'
 
 interface Log {
@@ -142,7 +142,7 @@ async function fetchLogs() {
       params.end_date = dateRange.value[1].toISOString()
     }
 
-    const { data } = await axios.get('/api/audit/logs', { params })
+    const { data } = await api.get('/api/audit/logs', { params })
     logs.value = data.items
     pagination.total = data.total
   } catch (e: any) {

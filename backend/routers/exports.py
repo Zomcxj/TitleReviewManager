@@ -67,8 +67,6 @@ async def export_customers(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    from sqlalchemy import or_
-    
     query = db.query(Customer, Application).join(
         Application, Customer.id == Application.customer_id
     )

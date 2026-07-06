@@ -14,7 +14,6 @@ import re
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
 USERNAME_PATTERN = re.compile(r'^[a-zA-Z0-9_]{2,50}$')
-PASSWORD_MIN_LENGTH = 6
 
 
 @router.post("/login")

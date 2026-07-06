@@ -86,21 +86,6 @@ def create_customer_directories(year: int, salesman_name: str, customer_name: st
     return base
 
 
-def rename_customer_directory(old_rel: str, new_rel: str) -> bool:
-    """客户改名/调换业务员时重命名目录"""
-    root = get_storage_root()
-    old_path = os.path.join(root, old_rel)
-    new_path = os.path.join(root, new_rel)
-    if not os.path.exists(old_path):
-        return False
-    try:
-        os.renames(old_path, new_path)
-        return True
-    except Exception as e:
-        logger.error(f"Rename dir failed: {e}")
-        return False
-
-
 def save_file(customer_rel: str, category: str, filename: str, content: bytes) -> str:
     """
     保存文件到客户目录下，保留原始文件名。

@@ -3,17 +3,17 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Material, Application, Customer, User, OperationLog
-from schemas import MaterialResponse, MaterialCategory, AuditStatus
+from schemas import MaterialResponse
+from enums import MaterialCategory, AuditStatus
 from auth import get_current_user
 from datetime import datetime
 from storage import save_file, read_file, delete_file as storage_delete, list_files as storage_list, customer_dir, get_pinyin_initial
-import os as _os
 from urllib.parse import quote
 
 router = APIRouter(prefix="/api/applications/{application_id}/materials", tags=["材料管理"])
 
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png"}
-MAX_FILE_SIZE = 50 * 1024 * 1024
+MAX_FILE_SIZE = 50 * 1024 * 1024  # ponytail: 与 enums.py 删除后的唯一定义
 
 WRITE_ROLES = {"admin", "salesman"}
 

@@ -5,13 +5,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 import enum
 from database import Base
-from enums import (
-    UserRole,
-    ApplicationStatus,
-    MaterialCategory,
-    AuditStatus,
-    FeedbackType,
-)
+from enums import ApplicationStatus, AuditStatus
 
 
 class User(Base):

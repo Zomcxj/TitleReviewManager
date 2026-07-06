@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Body
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func, case
-from sqlalchemy.sql import exists
+from sqlalchemy import or_, func
 from database import get_db
 from models import Customer, Application, User, Material
 from schemas import (

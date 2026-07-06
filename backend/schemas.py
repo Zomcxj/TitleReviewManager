@@ -1,22 +1,6 @@
 from pydantic import BaseModel, Field, field_serializer
 from typing import Optional, List
 from datetime import datetime, timezone
-from enums import (
-    UserRole,
-    ApplicationStatus,
-    MaterialCategory,
-    AuditStatus,
-    FeedbackType,
-    VALID_TRANSITIONS,
-)
-
-
-class ProjectExperience(BaseModel):
-    name: str
-    start_date: str
-    end_date: str
-    role: str
-    description: str
 
 
 class LoginRequest(BaseModel):
@@ -156,14 +140,6 @@ class MaterialResponse(BaseModel):
         from_attributes = True
 
 
-class ReviewCreate(BaseModel):
-    material_id: Optional[int] = None
-    application_id: Optional[int] = None
-    result: str
-    issue_type: Optional[str] = None
-    description: Optional[str] = None
-
-
 class ReviewResponse(BaseModel):
     id: int
     material_id: Optional[int]
@@ -183,12 +159,6 @@ class ReviewResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class FeedbackCreate(BaseModel):
-    application_id: int
-    feedback_type: str
-    content: Optional[str] = None
 
 
 class FeedbackResponse(BaseModel):
@@ -280,15 +250,6 @@ class NotificationListResponse(BaseModel):
     items: List[NotificationResponse]
     total: int
     unread_count: int
-
-
-class NotificationCreate(BaseModel):
-    user_id: int
-    title: str
-    content: str
-    type: str
-    related_type: Optional[str] = None
-    related_id: Optional[int] = None
 
 
 class FollowUpResponse(BaseModel):

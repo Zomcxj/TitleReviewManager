@@ -68,7 +68,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import axios from 'axios'
+import api from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 interface Customer {
@@ -97,7 +97,7 @@ const stats = reactive({
 
 async function loadStats() {
   try {
-    const { data } = await axios.get('/api/public-pool/stats')
+    const { data } = await api.get('/api/public-pool/stats')
     stats.total_in_pool = data.total_in_pool
     stats.today_claims = data.today_claims
     stats.overdue = data.overdue
@@ -110,7 +110,7 @@ async function loadStats() {
 async function loadData() {
   loading.value = true
   try {
-    const { data } = await axios.get('/api/public-pool/', {
+    const { data } = await api.get('/api/public-pool/', {
       params: { page: page.value, page_size: pageSize.value, keyword: keyword.value || undefined },
     })
     customers.value = data.items
@@ -125,7 +125,7 @@ async function loadData() {
 async function handleClaim(customer: Customer) {
   try {
     await ElMessageBox.confirm(`确认领取客户 "${customer.name}"？`, '领取客户')
-    await axios.post(`/api/public-pool/claim/${customer.id}`)
+    await api.post(`/api/public-pool/claim/${customer.id}`)
     ElMessage.success('领取成功')
     loadData()
     loadStats()

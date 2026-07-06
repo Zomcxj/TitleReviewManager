@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Review, Material, Application, User, OperationLog
-from schemas import ReviewCreate, ReviewResponse
+from schemas import ReviewResponse
 from auth import get_current_user
 from datetime import datetime
 import os

@@ -107,12 +107,3 @@ async def get_current_user(request: Request) -> dict:
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     return payload
-
-
-async def require_role(required_roles: List[str]):
-    from fastapi import Depends
-    async def check_role(user: dict = Depends(get_current_user)):
-        if user.get("role") not in required_roles:
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
-        return user
-    return check_role

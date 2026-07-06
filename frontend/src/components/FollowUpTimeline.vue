@@ -63,7 +63,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, defineProps } from 'vue'
-import axios from 'axios'
+import api from '../api'
 import { ElMessage } from 'element-plus'
 
 interface FollowUp {
@@ -92,7 +92,7 @@ const form = ref({
 async function loadFollowUps() {
   loading.value = true
   try {
-    const { data } = await axios.get(`/api/follow-ups/customer/${props.customerId}`)
+    const { data } = await api.get(`/api/follow-ups/customer/${props.customerId}`)
     followUps.value = data
   } catch (e) {
     ElMessage.error('加载跟进记录失败')
@@ -109,7 +109,7 @@ async function handleSubmit() {
   
   submitting.value = true
   try {
-    await axios.post('/api/follow-ups/', {
+    await api.post('/api/follow-ups/', {
       customer_id: props.customerId,
       ...form.value,
     })
