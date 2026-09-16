@@ -62,3 +62,7 @@ VALID_TRANSITIONS = {
     ApplicationStatus.REAPPLY: [ApplicationStatus.SUPPLEMENT, ApplicationStatus.COMPLETED],
     ApplicationStatus.APPROVED: [],  # 终态
 }
+
+# 文件上传配置（materials / reviews / feedback 统一从enums导入）
+ALLOWED_FILE_EXTENSIONS = {".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png"}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB

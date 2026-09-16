@@ -5,7 +5,7 @@ from models import Application, Customer, OperationLog, User
 from schemas import ApplicationUpdate, ApplicationResponse
 from enums import VALID_TRANSITIONS
 from auth import get_current_user
-from datetime import datetime, timezone
+from datetime import datetime
 import uuid
 from routers.notifications import create_notification
 
@@ -36,6 +36,16 @@ async def update_application(
     old_status = app.status
     update_data = data.model_dump(exclude_unset=True)
 
+    # 分配审核员：仅管理员/审核员可设置，且目标用户必须是审核员角色
+    if "assigned_reviewer_id" in update_data:
+        if user.get("role") not in ("admin", "reviewer"):
+            raise HTTPException(status_code=403, detail="仅审核员或管理员可以分配审核员")
+        reviewer_id = update_data["assigned_reviewer_id"]
+        if reviewer_id is not None:
+            reviewer = db.query(User).filter(User.id == reviewer_id).first()
+            if not reviewer or reviewer.role != "reviewer":
+                raise HTTPException(status_code=400, detail="指定的审核员不存在或不是审核员角色")
+
     if "status" in update_data:
         new_status = update_data["status"]
         if new_status not in VALID_TRANSITIONS.get(old_status, []):
@@ -43,8 +53,15 @@ async def update_application(
                 status_code=400,
                 detail=f"不允许从 '{old_status}' 转换到 '{new_status}'"
             )
+        # 角色规则：审核结果（返修/通过/不通过）仅审核员/管理员；其余状态流转仅业务员/管理员
+        role = user.get("role")
+        if old_status == "提交评审机构审核":
+            if role not in ("reviewer", "admin"):
+                raise HTTPException(status_code=403, detail="该状态变更需要审核员操作")
+        elif role not in ("salesman", "admin"):
+            raise HTTPException(status_code=403, detail="该状态变更需要业务员操作")
         if new_status == "提交评审机构审核":
-            app.submitted_at = datetime.now(timezone.utc)
+            app.submitted_at = datetime.utcnow()
         app.status = new_status
         
         customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
@@ -121,13 +138,25 @@ async def submit_to_institution(
     db: Session = Depends(get_db),
 ):
     user = await get_current_user(request)
+    if user.get("role") not in ("salesman", "admin"):
+        raise HTTPException(status_code=403, detail="仅业务员和管理员可提交评审机构")
     app = db.query(Application).filter(Application.id == application_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="申报批次不存在")
     if app.status != "完成资料":
         raise HTTPException(status_code=400, detail="只有完成资料状态才能提交评审机构")
-    body = await request.json()
-    institution_name = body.get("institution_name", "")
+    if user.get("role") == "salesman":
+        customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
+        if not customer or customer.assigned_salesman_id != user.get("id"):
+            raise HTTPException(status_code=403, detail="仅可提交自己名下客户的申报批次")
+    # body 解析容错：空 body 或非法 JSON 时使用空机构名，不抛 500
+    institution_name = ""
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            institution_name = body.get("institution_name", "") or ""
+    except Exception:
+        institution_name = ""
     old_status = app.status
     app.status = "提交评审机构审核"
     app.institution_name = institution_name
@@ -153,11 +182,17 @@ async def create_reapplication(
     db: Session = Depends(get_db),
 ):
     user = await get_current_user(request)
+    if user.get("role") not in ("salesman", "admin"):
+        raise HTTPException(status_code=403, detail="仅业务员和管理员可发起二次申报")
     old_app = db.query(Application).filter(Application.id == application_id).first()
     if not old_app:
         raise HTTPException(status_code=404, detail="申报批次不存在")
     if old_app.status != "不通过":
         raise HTTPException(status_code=400, detail="只有不通过的批次才能发起二次申报")
+    if user.get("role") == "salesman":
+        customer = db.query(Customer).filter(Customer.id == old_app.customer_id).first()
+        if not customer or customer.assigned_salesman_id != user.get("id"):
+            raise HTTPException(status_code=403, detail="仅可对自己名下客户的批次发起二次申报")
     new_app = Application(
         customer_id=old_app.customer_id,
         professional_category=old_app.professional_category,

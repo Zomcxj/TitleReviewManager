@@ -27,6 +27,10 @@
             <el-icon><UserFilled /></el-icon>
             <span>客户管理</span>
           </el-menu-item>
+          <el-menu-item v-if="authStore.isSalesman || authStore.isAdmin" index="/admin/public-pool" class="nav-item">
+            <el-icon><Grid /></el-icon>
+            <span>公海池</span>
+          </el-menu-item>
           <el-menu-item v-if="authStore.isSalesman || authStore.isAdmin" index="/admin/registration-links" class="nav-item">
             <el-icon><Link /></el-icon>
             <span>注册链接</span>
@@ -116,6 +120,7 @@ import {
   List,
   Upload,
   Switch,
+  Grid,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -128,6 +133,7 @@ const pageTitle = computed(() => {
   const map: Record<string, string> = {
     '/admin/dashboard': '工作台',
     '/admin/customers': '客户管理',
+    '/admin/public-pool': '客户公海池',
     '/admin/registration-links': '注册链接管理',
     '/admin/reviews': '审核工作台',
     '/admin/users': '用户管理',

@@ -107,3 +107,27 @@ async def get_current_user(request: Request) -> dict:
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     return payload
+
+
+def require_role(*required_roles):
+    """依赖项工厂：校验 JWT 并回查数据库，确保用户仍存在且角色为最新值。
+    支持可变参数 require_role("admin", "salesman") 或传列表 require_role(["admin", "salesman"])。"""
+    from fastapi import Depends
+    from sqlalchemy.orm import Session
+    from database import get_db
+
+    if len(required_roles) == 1 and isinstance(required_roles[0], (list, tuple, set)):
+        required = set(required_roles[0])
+    else:
+        required = set(required_roles)
+
+    def check_role(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+        from models import User
+        uid = user.get("user_id") or user.get("id")
+        u = db.query(User).filter(User.id == uid).first() if uid else None
+        if not u:
+            raise HTTPException(status_code=401, detail="用户不存在或已删除")
+        if u.role not in required:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return {"user_id": u.id, "id": u.id, "username": u.username, "role": u.role}
+    return check_role

@@ -7,7 +7,7 @@ from schemas import LoginRequest, UserResponse
 from auth import (
     verify_password, create_access_token, get_current_user,
     check_rate_limit, record_attempt, check_account_lock,
-    record_failed_login, reset_failed_login,
+    record_failed_login, reset_failed_login, ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 import re
 
@@ -38,7 +38,7 @@ async def login(req: LoginRequest, request: Request, db: Session = Depends(get_d
 
     # 4. Verify credentials
     user = db.query(User).filter(User.username == req.username).first()
-    if not user or not verify_password(req.password, user.password_hash):
+    if not user or not user.password_hash or not verify_password(req.password, user.password_hash):
         record_attempt(client_ip)
         record_failed_login(req.username)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
@@ -49,7 +49,8 @@ async def login(req: LoginRequest, request: Request, db: Session = Depends(get_d
     user_dict = UserResponse.model_validate(user).model_dump(mode="json")
     response_data = {"message": "登录成功", "user": user_dict}
     resp = JSONResponse(content=response_data)
-    resp.set_cookie(key="access_token", value=token, httponly=True, samesite="lax", max_age=86400)
+    # Cookie 生命周期与 JWT 有效期(480min)保持一致，避免 cookie 残留但 token 已过期
+    resp.set_cookie(key="access_token", value=token, httponly=True, samesite="lax", max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
     return resp
 
 

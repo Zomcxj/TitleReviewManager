@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Customer, Application, User
 from auth import get_current_user
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 from routers.notifications import create_notification
 from typing import List
 
@@ -31,7 +31,7 @@ async def batch_assign_customers(
             old_salesman_id = customer.assigned_salesman_id
             customer.assigned_salesman_id = salesman_id
             customer.is_public = False
-            customer.sla_deadline = datetime.utcnow()
+            customer.sla_deadline = datetime.utcnow() + timedelta(hours=24)
             updated_count += 1
             
             if old_salesman_id and old_salesman_id != salesman_id:
@@ -134,7 +134,7 @@ async def batch_release_customers(
             if old_salesman_id:
                 create_notification(
                     db=db,
-                    user_id=customer.assigned_salesman_id,
+                    user_id=old_salesman_id,
                     title="客户被释放",
                     content=f"你的客户 {customer.name} 已被释放到公海池",
                     type="batch_release",

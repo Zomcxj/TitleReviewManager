@@ -75,7 +75,7 @@
     </el-dialog>
 
     <!-- Edit User Dialog -->
-    <el-dialog v-model="showEditDialog" title="编辑用户" width="480px" @close="resetEditVerification">
+    <el-dialog v-model="showEditDialog" title="编辑用户" width="480px">
       <el-form :model="editForm" label-position="top">
         <el-form-item label="用户名">
           <el-input v-model="editForm.username" />
@@ -91,17 +91,7 @@
           <el-input v-model="editForm.real_name" />
         </el-form-item>
         <el-form-item label="密码">
-          <div v-if="!adminPasswordVerified" class="password-locked">
-            <el-input model-value="******" disabled />
-            <el-button type="primary" text @click="showVerifyInput = true" style="margin-top: 8px">
-              <el-icon><Key /></el-icon> 输入管理员密码查看
-            </el-button>
-            <div v-if="showVerifyInput" style="margin-top: 8px; display: flex; gap: 8px">
-              <el-input v-model="adminPassword" type="password" show-password placeholder="输入当前管理员密码" style="flex: 1" />
-              <el-button type="primary" @click="verifyAdminPassword" :loading="verifyingPassword">验证</el-button>
-            </div>
-          </div>
-          <el-input v-else v-model="editForm.password" type="password" show-password placeholder="留空则不修改密码" />
+          <el-input v-model="editForm.password" type="password" show-password placeholder="重置密码（留空则不修改）" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -141,10 +131,6 @@ const submitting = ref(false)
 const showCreateDialog = ref(false)
 const showEditDialog = ref(false)
 const showPasswordDialog = ref(false)
-const adminPasswordVerified = ref(false)
-const adminPassword = ref('')
-const showVerifyInput = ref(false)
-const verifyingPassword = ref(false)
 const currentUserId = computed(() => authStore.user?.id)
 
 const form = ref({ username: '', password: '', role: 'salesman', real_name: '' })
@@ -203,33 +189,8 @@ async function handleCreate() {
   }
 }
 
-function resetEditVerification() {
-  adminPasswordVerified.value = false
-  adminPassword.value = ''
-  showVerifyInput.value = false
-}
-
-async function verifyAdminPassword() {
-  if (!adminPassword.value) {
-    ElMessage.warning('请输入管理员密码')
-    return
-  }
-  verifyingPassword.value = true
-  try {
-    const { data } = await api.post('/api/users/verify-admin-password', { password: adminPassword.value, user_id: editForm.value.id })
-    adminPasswordVerified.value = true
-    showVerifyInput.value = false
-    editForm.value.password = data.password || ''
-  } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail || '密码验证失败')
-  } finally {
-    verifyingPassword.value = false
-  }
-}
-
 function handleEdit(row: any) {
   editForm.value = { id: row.id, username: row.username, role: row.role, real_name: row.real_name || '', password: '' }
-  resetEditVerification()
   showEditDialog.value = true
 }
 
@@ -300,9 +261,6 @@ onMounted(loadUsers)
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-.password-locked {
-  width: 100%;
 }
 .page-toolbar {
   display: flex;

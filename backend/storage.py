@@ -86,6 +86,21 @@ def create_customer_directories(year: int, salesman_name: str, customer_name: st
     return base
 
 
+def rename_customer_directory(old_rel: str, new_rel: str) -> bool:
+    """客户改名/调换业务员时重命名目录（customers.py 的转让/改名同步依赖此函数）"""
+    root = get_storage_root()
+    old_path = os.path.join(root, old_rel)
+    new_path = os.path.join(root, new_rel)
+    if not os.path.exists(old_path):
+        return False
+    try:
+        os.renames(old_path, new_path)
+        return True
+    except Exception as e:
+        logger.error(f"Rename dir failed: {e}")
+        return False
+
+
 def save_file(customer_rel: str, category: str, filename: str, content: bytes) -> str:
     """
     保存文件到客户目录下，保留原始文件名。
@@ -170,40 +185,46 @@ def _sanitize_filename(name: str) -> str:
     return name
 
 
-# ---------- 拼音首字母工具（简单实现，无需额外库） ----------
+# ---------- 拼音首字母工具（基于 GB2312 编码区间，常用汉字按拼音排序） ----------
 def get_pinyin_initial(name: str) -> str:
     """
     获取姓名拼音首字母（大写）。
-    简单实现：取姓名的拼音首字母。
-    为简化，这里取每个汉字 Unicode 区间映射的首字母。
-    更精确需要 pypinyin 库。
+    利用 GB2312 一级汉字按拼音排序的特性：将汉字编码为 GB2312 后，
+    按双字节编码区间映射到 A-Z。
     """
     if not name:
         return ""
     initials = []
     for char in name:
         if '\u4e00' <= char <= '\u9fff':
-            initials.append(_char_to_initial(char))
+            initial = _char_to_initial(char)
+            if initial:
+                initials.append(initial)
         elif 'a' <= char.lower() <= 'z':
             initials.append(char.upper())
     return "".join(initials[:4])  # 最多取4个首字母
 
 
-def _char_to_initial(char: str) -> str:
-    """汉字 -> 拼音首字母（近似映射）"""
-    code = ord(char)
-    # Unicode 拼音首字母区间映射
-    ranges = [
-        (0x4E00, 0x4EAC, 'A'), (0x4EAD, 0x4FBB, 'B'), (0x4FBC, 0x5000, 'C'),
-        (0x5001, 0x506C, 'D'), (0x506D, 0x50DA, 'E'), (0x50DB, 0x51A0, 'F'),
-        (0x51A1, 0x5265, 'G'), (0x5266, 0x5314, 'H'), (0x5315, 0x5348, 'I'),
-        (0x5349, 0x53D1, 'J'), (0x53D2, 0x5450, 'K'), (0x5451, 0x5583, 'L'),
-        (0x5584, 0x56A5, 'M'), (0x56A6, 0x56D7, 'N'), (0x56D8, 0x5705, 'O'),
-        (0x5706, 0x57F0, 'P'), (0x57F1, 0x58EE, 'Q'), (0x58EF, 0x5A00, 'R'),
-        (0x5A01, 0x5B00, 'S'), (0x5B01, 0x5C00, 'T'), (0x5C01, 0x5CFF, 'W'),
-        (0x5D00, 0x5DFF, 'X'), (0x5E00, 0x5EFF, 'Y'), (0x5F00, 0x9FFF, 'Z'),
-    ]
-    for start, end, letter in ranges:
+# GB2312 一级汉字（按拼音排序）的双字节编码区间 -> 首字母
+_GB2312_PINYIN_RANGES = [
+    (0xB0A1, 0xB0C4, 'A'), (0xB0C5, 0xB2C0, 'B'), (0xB2C1, 0xB4ED, 'C'),
+    (0xB4EE, 0xB6E9, 'D'), (0xB6EA, 0xB7A1, 'E'), (0xB7A2, 0xB8C0, 'F'),
+    (0xB8C1, 0xB9FD, 'G'), (0xB9FE, 0xBBF6, 'H'), (0xBBF7, 0xBFA5, 'J'),
+    (0xBFA6, 0xC0AB, 'K'), (0xC0AC, 0xC2E7, 'L'), (0xC2E8, 0xC4C2, 'M'),
+    (0xC4C3, 0xC5B5, 'N'), (0xC5B6, 0xC5BD, 'O'), (0xC5BE, 0xC6D9, 'P'),
+    (0xC6DA, 0xC8BA, 'Q'), (0xC8BB, 0xC8F5, 'R'), (0xC8F6, 0xCBF9, 'S'),
+    (0xCBFA, 0xCDD9, 'T'), (0xCDDA, 0xCEF3, 'W'), (0xCEF4, 0xD188, 'X'),
+    (0xD189, 0xD4D0, 'Y'), (0xD4D1, 0xD7F9, 'Z'),
+]
+
+
+def _char_to_initial(char: str) -> Optional[str]:
+    """汉字 -> 拼音首字母；GB2312 之外的生僻字返回 None"""
+    try:
+        code = int.from_bytes(char.encode("gb2312"), "big")
+    except (UnicodeEncodeError, OverflowError):
+        return None
+    for start, end, letter in _GB2312_PINYIN_RANGES:
         if start <= code <= end:
             return letter
-    return 'Z'
+    return None

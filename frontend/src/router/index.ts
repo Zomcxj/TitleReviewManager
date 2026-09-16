@@ -15,6 +15,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'customers/:id', name: 'CustomerDetail', component: () => import('../views/CustomerDetail.vue') },
       { path: 'reviews', name: 'ReviewWorkspace', component: () => import('../views/ReviewWorkspace.vue'), meta: { roles: ['admin', 'reviewer'] } },
       { path: 'registration-links', name: 'RegistrationLinks', component: () => import('../views/RegistrationLinks.vue'), meta: { roles: ['admin', 'salesman'] } },
+      { path: 'public-pool', name: 'PublicPool', component: () => import('../views/PublicPool.vue'), meta: { roles: ['admin', 'salesman'] } },
       { path: 'audit-logs', name: 'AuditLog', component: () => import('../views/AuditLog.vue'), meta: { roles: ['admin'] } },
       { path: 'users', name: 'UserList', component: () => import('../views/UserList.vue'), meta: { roles: ['admin'] } },
       { path: 'import', name: 'CustomerImport', component: () => import('../views/CustomerImport.vue'), meta: { roles: ['admin', 'salesman'] } },

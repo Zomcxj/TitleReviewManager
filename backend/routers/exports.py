@@ -67,6 +67,9 @@ async def export_customers(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    if current_user.get("role") not in ("admin", "salesman"):
+        raise HTTPException(status_code=403, detail="仅业务员和管理员可导出")
+
     query = db.query(Customer, Application).join(
         Application, Customer.id == Application.customer_id
     )
@@ -148,6 +151,9 @@ async def export_applications(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    if current_user.get("role") not in ("admin", "salesman"):
+        raise HTTPException(status_code=403, detail="仅业务员和管理员可导出")
+
     query = db.query(Application).join(Customer)
     
     if current_user.get("role") == "salesman":

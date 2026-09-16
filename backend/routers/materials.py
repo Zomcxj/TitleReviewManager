@@ -6,14 +6,15 @@ from models import Material, Application, Customer, User, OperationLog
 from schemas import MaterialResponse
 from enums import MaterialCategory, AuditStatus
 from auth import get_current_user
+from enums import ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE
 from datetime import datetime
 from storage import save_file, read_file, delete_file as storage_delete, list_files as storage_list, customer_dir, get_pinyin_initial
+import logging
+import os as _os
 from urllib.parse import quote
 
 router = APIRouter(prefix="/api/applications/{application_id}/materials", tags=["材料管理"])
-
-ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png"}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # ponytail: 与 enums.py 删除后的唯一定义
+logger = logging.getLogger(__name__)
 
 WRITE_ROLES = {"admin", "salesman"}
 
@@ -21,6 +22,13 @@ WRITE_ROLES = {"admin", "salesman"}
 def require_write_role(user: dict):
     if user.get("role") not in WRITE_ROLES:
         raise HTTPException(status_code=403, detail="仅业务员和管理员可操作")
+
+
+def check_customer_ownership(user: dict, customer: Customer):
+    """数据隔离：业务员只能操作自己名下客户的材料，admin/reviewer 不限。"""
+    if user.get("role") == "salesman":
+        if not customer or customer.assigned_salesman_id != (user.get("id") or user.get("user_id")):
+            raise HTTPException(status_code=403, detail="无权操作该客户的材料")
 
 
 def _get_customer_dir(customer: Customer) -> str:
@@ -50,8 +58,12 @@ async def list_materials(
     if not app:
         raise HTTPException(status_code=404, detail="申报批次不存在")
     customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
+    check_customer_ownership(user, customer)
 
     q = db.query(Material).filter(Material.application_id == application_id)
+    if keyword:
+        # 过滤 LIKE 通配符特殊字符，避免通配符注入
+        keyword = keyword.replace("%", "").replace("_", "").replace("\\", "")
     if keyword:
         q = q.filter(Material.filename.like(f"%{keyword}%"))
     if category:
@@ -83,17 +95,24 @@ async def upload_material(
     customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
+    check_customer_ownership(user, customer)
     valid_categories = [c.value for c in MaterialCategory]
     if category not in valid_categories:
         raise HTTPException(status_code=400, detail=f"无效的材料类型，可选：{valid_categories}")
 
     ext = _os.path.splitext(file.filename)[1].lower()
-    if ext not in ALLOWED_EXTENSIONS:
+    if ext not in ALLOWED_FILE_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"不支持的文件类型：{ext}")
 
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
+    if file.size is not None:
+        # 优先使用请求声明的文件大小，超限时不再读取内容
+        if file.size > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
+        content = await file.read()
+    else:
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
 
     rel = _get_customer_dir(customer)
     stored_path = save_file(rel, category, file.filename, content)
@@ -140,7 +159,25 @@ async def delete_material(
     ).first()
     if not material:
         raise HTTPException(status_code=404, detail="材料不存在")
-    storage_delete(material.file_path)
+    app = db.query(Application).filter(Application.id == application_id).first()
+    customer = db.query(Customer).filter(Customer.id == app.customer_id).first() if app else None
+    check_customer_ownership(user, customer)
+
+    try:
+        storage_delete(material.file_path)
+    except Exception:
+        # 物理文件删除失败仅告警，不阻断数据库记录删除
+        logger.warning("删除材料物理文件失败: %s", material.file_path, exc_info=True)
+
+    log = OperationLog(
+        user_id=user.get("user_id") or user.get("id"),
+        username=user.get("username", ""),
+        action="删除材料",
+        resource_type="material",
+        resource_id=material.id,
+        new_value={"detail": f"材料: {material.filename}, 类型: {material.category}"},
+    )
+    db.add(log)
     db.delete(material)
     db.commit()
     return {"message": "材料已删除"}
@@ -158,10 +195,16 @@ async def update_material(
     ).first()
     if not material:
         raise HTTPException(status_code=404, detail="材料不存在")
+    app = db.query(Application).filter(Application.id == application_id).first()
+    customer = db.query(Customer).filter(Customer.id == app.customer_id).first() if app else None
+
     if remark is not None:
         require_write_role(user)
+        check_customer_ownership(user, customer)
         material.remark = remark
     if audit_status is not None:
+        if user.get("role") not in ("reviewer", "admin"):
+            raise HTTPException(status_code=403, detail="仅审核员和管理员可变更审核状态")
         if audit_status not in [s.value for s in AuditStatus]:
             raise HTTPException(status_code=400, detail="无效的审核状态")
         material.audit_status = audit_status
@@ -176,6 +219,9 @@ async def download_material_file(material_id: int, request: Request, db: Session
     material = db.query(Material).filter(Material.id == material_id).first()
     if not material:
         raise HTTPException(status_code=404, detail="材料不存在")
+    app = db.query(Application).filter(Application.id == material.application_id).first()
+    customer = db.query(Customer).filter(Customer.id == app.customer_id).first() if app else None
+    check_customer_ownership(user, customer)
     content = read_file(material.file_path)
     if content is None:
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -199,5 +245,6 @@ async def browse_files(application_id: int, request: Request, db: Session = Depe
     customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
+    check_customer_ownership(user, customer)
     rel = _get_customer_dir(customer)
     return {"customer_dir": rel, "tree": storage_list(rel)}

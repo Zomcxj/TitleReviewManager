@@ -34,13 +34,18 @@ app.include_router(users.router)
 app.include_router(imports.router)
 app.include_router(word_import.router)
 
-uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
-if os.path.exists(uploads_dir):
-    app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+# 注意：uploads 目录不再静态挂载 —— 审核附件、反馈附件必须走鉴权下载接口，
+# 避免客户敏感文件被匿名访问（原先 /uploads 是完全公开的）。
 
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
 if os.path.exists(frontend_dir):
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="frontend_assets")
+
+
+@app.on_event("startup")
+def ensure_tables():
+    """建表兜底：Alembic 负责结构迁移，这里保证全新 SQLite 环境能直接启动（只补缺失表，不动已有结构）。"""
+    Base.metadata.create_all(bind=engine)
 
 
 @app.get("/api/health")
@@ -58,7 +63,9 @@ async def health():
 async def not_found_handler(request: Request, exc: HTTPException):
     path = request.url.path
     if path.startswith("/api/") or path.startswith("/uploads/"):
-        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        # 保留业务端点抛出的原始 detail（如「材料不存在」），仅对未知路径兜底
+        detail = getattr(exc, "detail", None) or "Not Found"
+        return JSONResponse(status_code=404, content={"detail": detail})
     index = os.path.join(frontend_dir, "index.html")
     if os.path.exists(index):
         return FileResponse(index)

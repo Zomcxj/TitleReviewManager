@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Body
+from fastapi import APIRouter, Depends, HTTPException, Request, Body, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from database import get_db
@@ -7,21 +7,70 @@ from schemas import (
     CustomerCreate, CustomerUpdate, CustomerResponse,
     ApplicationCreate, ApplicationResponse,
 )
-from auth import get_current_user
+from auth import get_current_user, require_role
 from datetime import datetime, timezone, timedelta
+import asyncio
+import logging
 import uuid
 from utils.audit_logger import manual_audit_log
-from storage import get_pinyin_initial, create_customer_directories, customer_dir
+from storage import get_pinyin_initial, create_customer_directories, customer_dir, rename_customer_directory
 from routers.notifications import create_notification
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/customers", tags=["客户管理"])
+
+
+def _require_roles(*roles: str):
+    """兼容 require_role 的签名差异（*args / List）与 async 工厂写法"""
+    try:
+        dep = require_role(*roles)
+    except TypeError:
+        dep = require_role(list(roles))
+    if asyncio.iscoroutine(dep):
+        dep = asyncio.run(dep)
+    return dep
+
+
+def _sync_customer_directory(db: Session, customer: Customer, old_name: str, old_pinyin: str, old_salesman_username: str = ""):
+    """客户改名/换业务员后同步 NAS 目录：重命名目录并修正该客户材料的 file_path 前缀。"""
+    year = customer.created_at.year if customer.created_at else datetime.utcnow().year
+    old_rel = customer_dir(
+        year=year,
+        salesman_name=old_salesman_username or "未分配",
+        customer_name=old_name,
+        initial=old_pinyin or get_pinyin_initial(old_name),
+    )
+    new_salesman = db.query(User).filter(User.id == customer.assigned_salesman_id).first() if customer.assigned_salesman_id else None
+    new_rel = customer_dir(
+        year=year,
+        salesman_name=new_salesman.username if new_salesman else "",
+        customer_name=customer.name,
+        initial=customer.name_pinyin or get_pinyin_initial(customer.name),
+    )
+    if old_rel == new_rel:
+        return
+    if not rename_customer_directory(old_rel, new_rel):
+        logger.warning(f"客户 {customer.id} 目录同步跳过：{old_rel} 不存在或重命名失败")
+        return
+    old_prefix = old_rel + "/"
+    materials = (
+        db.query(Material)
+        .join(Application, Material.application_id == Application.id)
+        .filter(Application.customer_id == customer.id)
+        .all()
+    )
+    for m in materials:
+        path = (m.file_path or "").replace("\\", "/")
+        if path.startswith(old_prefix):
+            m.file_path = new_rel + "/" + path[len(old_prefix):]
 
 
 @router.get("/")
 async def list_customers(
     request: Request,
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     status: str = None,
     keyword: str = None,
     db: Session = Depends(get_db),
@@ -87,26 +136,19 @@ async def get_stats(request: Request, db: Session = Depends(get_db)):
         base_query = base_query.join(Customer).filter(Customer.assigned_salesman_id == user.get("id"))
     elif user.get("role") == "reviewer":
         base_query = base_query.filter(Application.status.in_(["提交评审机构审核", "返修", "通过", "不通过"]))
-    
-    from sqlalchemy import func
-    status_rows = db.query(Application.status, func.count(Application.id)).group_by(Application.status).all()
+
+    status_rows = base_query.with_entities(Application.status, func.count(Application.id)).group_by(Application.status).all()
     status_counts = {row[0]: row[1] for row in status_rows}
-    
+
     all_statuses = ["初次申报", "资料补充", "完成资料", "提交评审机构审核", "返修", "通过", "不通过", "二次申报"]
     for s in all_statuses:
         if s not in status_counts:
             status_counts[s] = 0
-    
-    total_query = db.query(func.count(Application.id))
-    if user.get("role") == "salesman":
-        total_query = total_query.join(Customer).filter(Customer.assigned_salesman_id == user.get("id"))
-    total = total_query.scalar()
-    
+
+    total = base_query.with_entities(func.count(Application.id)).scalar()
+
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_query = db.query(func.count(Application.id)).filter(Application.created_at >= today_start)
-    if user.get("role") == "salesman":
-        today_query = today_query.join(Customer).filter(Customer.assigned_salesman_id == user.get("id"))
-    today_new = today_query.scalar()
+    today_new = base_query.filter(Application.created_at >= today_start).with_entities(func.count(Application.id)).scalar()
     
     return {"by_status": status_counts, "total": total, "today_new": today_new}
 
@@ -122,20 +164,14 @@ async def list_salesmen(request: Request, db: Session = Depends(get_db)):
     return [{"id": s.id, "username": s.username, "real_name": s.real_name or s.username} for s in salesmen]
 
 
-@router.get("/self/{id_number}")
-async def get_self_customer(id_number: str, db: Session = Depends(get_db)):
-    customer = db.query(Customer).filter(Customer.id_number == id_number).first()
-    if not customer:
-        raise HTTPException(status_code=404, detail="客户不存在")
-    return CustomerResponse.model_validate(customer)
-
-
 @router.get("/{customer_id}", response_model=dict)
 async def get_customer(customer_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
+    if user.get("role") == "salesman" and customer.assigned_salesman_id != user.get("id"):
+        raise HTTPException(status_code=403, detail="只能查看自己名下的客户")
     applications = db.query(Application).filter(
         Application.customer_id == customer_id
     ).order_by(Application.id.desc()).all()
@@ -201,12 +237,28 @@ async def update_customer(
     data: CustomerUpdate,
     request: Request,
     db: Session = Depends(get_db),
+    user: dict = Depends(_require_roles("admin", "salesman")),
 ):
-    user = await get_current_user(request)
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
-    
+    if user.get("role") == "salesman" and customer.assigned_salesman_id != user.get("id"):
+        raise HTTPException(status_code=403, detail="只能修改自己名下的客户")
+
+    update_data = data.model_dump(exclude_unset=True)
+
+    # 身份证号唯一性预检
+    if "id_number" in update_data and update_data["id_number"] != customer.id_number:
+        dup = db.query(Customer).filter(Customer.id_number == update_data["id_number"]).first()
+        if dup:
+            raise HTTPException(status_code=400, detail="该身份证号已存在")
+
+    # 记录目录同步所需的旧值（应用变更前）
+    old_name = customer.name
+    old_pinyin = customer.name_pinyin
+    old_salesman = customer.assigned_salesman
+    old_salesman_username = old_salesman.username if old_salesman else ""
+
     old_data = {
         "name": customer.name,
         "phone": customer.phone,
@@ -214,15 +266,15 @@ async def update_customer(
         "work_unit": customer.work_unit,
         "position": customer.position,
     }
-    
-    update_data = data.model_dump(exclude_unset=True)
+
     for key, value in update_data.items():
         setattr(customer, key, value)
     if "name" in update_data:
         customer.name_pinyin = get_pinyin_initial(customer.name)
         update_data["name_pinyin"] = customer.name_pinyin
-    
+
     db.flush()
+    _sync_customer_directory(db, customer, old_name, old_pinyin, old_salesman_username)
     manual_audit_log(
         db=db,
         user_id=user.get("id"),
@@ -287,7 +339,14 @@ async def transfer_customer(
         raise HTTPException(status_code=400, detail="目标业务员不存在")
 
     old_salesman_id = customer.assigned_salesman_id
+    old_salesman = customer.assigned_salesman
+    old_name = customer.name
+    old_pinyin = customer.name_pinyin
+
     customer.assigned_salesman_id = salesman_id
+
+    # 同步 NAS 目录（换业务员后目录在新业务员名下）
+    _sync_customer_directory(db, customer, old_name, old_pinyin, old_salesman.username if old_salesman else "")
 
     # 操作日志
     from models import OperationLog
@@ -301,6 +360,28 @@ async def transfer_customer(
         new_value={"assigned_salesman_id": salesman_id, "target_name": target.real_name},
     )
     db.add(log)
+
+    # 通知原业务员与新业务员
+    if old_salesman_id and old_salesman_id != salesman_id:
+        create_notification(
+            db=db,
+            user_id=old_salesman_id,
+            title="客户调出",
+            content=f"客户 {customer.name} 已被调出给 {target.real_name or target.username}",
+            type="batch_assign",
+            related_type="customer",
+            related_id=customer.id,
+        )
+    create_notification(
+        db=db,
+        user_id=salesman_id,
+        title="客户分配",
+        content=f"你被分配了新客户 {customer.name}",
+        type="batch_assign",
+        related_type="customer",
+        related_id=customer.id,
+    )
+
     db.commit()
 
     return {"message": f"已转让给 {target.real_name}"}
@@ -333,7 +414,15 @@ async def batch_transfer_customers(
     count = 0
     for c in customers:
         old_id = c.assigned_salesman_id
+        old_salesman = c.assigned_salesman
+        old_name = c.name
+        old_pinyin = c.name_pinyin
+
         c.assigned_salesman_id = salesman_id
+
+        # 同步 NAS 目录
+        _sync_customer_directory(db, c, old_name, old_pinyin, old_salesman.username if old_salesman else "")
+
         from models import OperationLog
         log = OperationLog(
             user_id=user.get("id"),
@@ -345,6 +434,27 @@ async def batch_transfer_customers(
             new_value={"assigned_salesman_id": salesman_id, "target_name": target.real_name},
         )
         db.add(log)
+
+        # 通知原业务员与新业务员
+        if old_id and old_id != salesman_id:
+            create_notification(
+                db=db,
+                user_id=old_id,
+                title="客户调出",
+                content=f"客户 {c.name} 已被调出给 {target.real_name or target.username}",
+                type="batch_assign",
+                related_type="customer",
+                related_id=c.id,
+            )
+        create_notification(
+            db=db,
+            user_id=salesman_id,
+            title="客户分配",
+            content=f"你被分配了新客户 {c.name}",
+            type="batch_assign",
+            related_type="customer",
+            related_id=c.id,
+        )
         count += 1
 
     db.commit()

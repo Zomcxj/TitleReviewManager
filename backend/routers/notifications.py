@@ -101,7 +101,7 @@ def create_notification(
     related_type: str = None,
     related_id: int = None,
 ):
-    """工具函数：创建通知"""
+    """工具函数：创建通知。只加入会话，不提交 —— 由调用方统一 commit，保证业务原子性。"""
     notification = Notification(
         user_id=user_id,
         title=title,
@@ -111,6 +111,4 @@ def create_notification(
         related_id=related_id,
     )
     db.add(notification)
-    db.commit()
-    db.refresh(notification)
     return notification

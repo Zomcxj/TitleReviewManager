@@ -34,7 +34,10 @@ async def get_dashboard_stats(
     this_week_start = today - timedelta(days=today.weekday())
     week_new = base_query.filter(Application.created_at >= this_week_start).count()
     
-    by_status = db.query(Application.status, func.count(Application.id)).group_by(Application.status).all()
+    by_status_query = db.query(Application.status, func.count(Application.id))
+    if user_role == "salesman":
+        by_status_query = by_status_query.join(Customer).filter(Customer.assigned_salesman_id == user_id)
+    by_status = by_status_query.group_by(Application.status).all()
     status_distribution = {row[0]: row[1] for row in by_status}
     
     return {
@@ -94,6 +97,7 @@ async def get_trend_data(
 async def get_performance_ranking(
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     salesmen = (
         db.query(User)

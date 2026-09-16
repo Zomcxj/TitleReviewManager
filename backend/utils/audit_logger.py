@@ -15,13 +15,13 @@ def manual_audit_log(
     new_value: Optional[dict] = None,
     request: Optional[Request] = None,
 ):
-    """手动记录审计日志"""
+    """手动记录审计日志。只加入会话，随调用方的事务一起提交，避免打断/回滚主业务。"""
     from main import logger
-    
+
     try:
         client_ip = request.client.host if request else None
         user_agent = request.headers.get("user-agent", "")[:255] if request else None
-        
+
         log_entry = OperationLog(
             user_id=user_id,
             username=username,
@@ -34,7 +34,5 @@ def manual_audit_log(
             user_agent=user_agent,
         )
         db.add(log_entry)
-        db.commit()
     except Exception as e:
         logger.error(f"审计日志记录失败：{e}")
-        db.rollback()

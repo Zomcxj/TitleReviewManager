@@ -8,6 +8,7 @@ SLA 时效管理定时任务
 
 from database import get_db
 from models import Customer, User, Notification
+from sqlalchemy import func, or_
 from datetime import datetime, timezone, timedelta
 from routers.notifications import create_notification
 import logging
@@ -29,13 +30,11 @@ def check_and_recovery_customers():
     try:
         threshold = datetime.utcnow() - timedelta(days=POOL_RECOVERY_DAYS)
         
+        # 用 coalesce 以创建时间兜底，避免新建客户（从未跟进）被立刻误回收
         overdue_customers = db.query(Customer).filter(
             Customer.is_public == False,
             Customer.assigned_salesman_id.isnot(None),
-            or_(
-                Customer.last_follow_up_at < threshold,
-                Customer.last_follow_up_at == None
-            )
+            func.coalesce(Customer.last_follow_up_at, Customer.created_at) < threshold
         ).all()
         
         for customer in overdue_customers:
@@ -93,6 +92,8 @@ def check_sla_deadlines():
                     related_id=customer.id,
                 )
                 logger.warning(f"客户 {customer.name} SLA 已超时")
+            # 清除已超时的 SLA 截止时间，避免每次运行重复通知
+            customer.sla_deadline = None
         
         db.commit()
         
@@ -104,11 +105,13 @@ def check_sla_deadlines():
 
 
 def send_expiring_reminders():
-    """发送即将超时提醒"""
+    """发送即将超时提醒（12 小时窗口内去重）"""
     db = next(get_db())
     try:
         now = datetime.utcnow()
         twelve_hours_later = now + timedelta(hours=12)
+        # 通知 created_at 以 aware UTC 写入，去重比较需使用 aware 时间
+        dedup_since = datetime.now(timezone.utc) - timedelta(hours=12)
         
         expiring = db.query(Customer).filter(
             Customer.sla_deadline.between(now, twelve_hours_later),
@@ -119,6 +122,15 @@ def send_expiring_reminders():
         for customer in expiring:
             salesman_id = customer.assigned_salesman_id
             if salesman_id:
+                # 12 小时内已提醒过的客户跳过，避免重复轰炸
+                reminded = db.query(Notification).filter(
+                    Notification.type == "sla_warning",
+                    Notification.related_type == "customer",
+                    Notification.related_id == customer.id,
+                    Notification.created_at >= dedup_since,
+                ).first()
+                if reminded:
+                    continue
                 create_notification(
                     db=db,
                     user_id=salesman_id,

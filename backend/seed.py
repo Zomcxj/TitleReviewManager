@@ -2,18 +2,14 @@ from database import SessionLocal, Base, engine
 import models  # noqa: F401 - needed for table registration
 from models import User, Customer, Application, Material, Review, Feedback, OperationLog
 from auth import hash_password
-from storage import get_pinyin_initial
+from storage import customer_dir, get_pinyin_initial, save_file
 import uuid
-import os
 from datetime import datetime, timedelta
 from sqlalchemy import text
 
 # 注意：数据库结构迁移现在由 Alembic 管理。
 # 请运行 alembic upgrade head 来更新数据库结构。
 # 本脚本仅用于填充种子数据。
-
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 DEFAULT_USERS = [
     {"username": "admin", "password": "admin123", "role": "admin", "real_name": "系统管理员"},
@@ -22,14 +18,6 @@ DEFAULT_USERS = [
     {"username": "reviewer1", "password": "review123", "role": "reviewer", "real_name": "审核员王五"},
     {"username": "reviewer2", "password": "review123", "role": "reviewer", "real_name": "审核员赵六"},
 ]
-
-
-def create_sample_file(file_path: str, filename: str):
-    """Create a small sample file for testing downloads."""
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    content = f"这是示例文件: {filename}\n用于职称申报系统测试。\n"
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(content)
 
 
 def seed():
@@ -43,7 +31,6 @@ def seed():
                 user = User(
                     username=u["username"],
                     password_hash=hash_password(u["password"]),
-                    password=u["password"],
                     role=u["role"],
                     real_name=u["real_name"],
                 )
@@ -223,23 +210,30 @@ def seed():
             if app_idx >= len(created_apps):
                 continue
             app = created_apps[app_idx]
-            app_dir = os.path.join(UPLOAD_DIR, str(app.id))
-            os.makedirs(app_dir, exist_ok=True)
+            customer = created_customers[applications_data[app_idx]["customer_idx"]]
+            # 通过归属业务员定位客户 NAS 目录，保证与下载路径一致
+            salesman = None
+            if customer.assigned_salesman_id:
+                salesman = db.query(User).filter(User.id == customer.assigned_salesman_id).first()
+            customer_rel = customer_dir(
+                year=customer.created_at.year,
+                salesman_name=salesman.username if salesman else "",
+                customer_name=customer.name,
+                initial=customer.name_pinyin or "",
+            )
 
             for cat in categories:
                 filenames = sample_filenames.get(cat, ["材料.pdf"])
                 for fn in filenames:
-                    unique_name = f"{uuid.uuid4().hex[:12]}{os.path.splitext(fn)[1]}"
-                    file_path = os.path.join(app_dir, unique_name)
-                    create_sample_file(file_path, fn)
-                    store_path = f"uploads/{app.id}/{unique_name}"
+                    content = f"这是示例文件: {fn}\n用于职称申报系统测试。\n".encode("utf-8")
+                    rel_path = save_file(customer_rel, cat, fn, content)
 
                     material = Material(
                         application_id=app.id,
                         category=cat,
                         filename=fn,
-                        file_path=store_path,
-                        file_size=len(f"示例文件内容: {fn}".encode("utf-8")) + 500,
+                        file_path=rel_path,
+                        file_size=len(content),
                         uploader_id=salesman1_id,
                         audit_status="待审核",
                     )

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from database import get_db
-from models import User
+from models import User, Customer
 from schemas import UserResponse, UserCreate, UserUpdate, PasswordChange
 from auth import get_current_user, hash_password, verify_password
 from typing import List
@@ -44,7 +44,6 @@ async def create_user(data: UserCreate, request: Request, db: Session = Depends(
     u = User(
         username=data.username,
         password_hash=hash_password(data.password),
-        password=data.password,
         role=data.role,
         real_name=data.real_name,
     )
@@ -63,7 +62,8 @@ async def update_user(user_id: int, data: UserUpdate, request: Request, db: Sess
         raise HTTPException(status_code=404, detail="用户不存在")
     upd = data.model_dump(exclude_unset=True)
     if "password" in upd:
-        upd["password_hash"] = hash_password(upd["password"])
+        # 明文密码 pop 出来单独 hash，避免 setattr 循环把明文写入 User.password
+        upd["password_hash"] = hash_password(upd.pop("password"))
     if "username" in upd and upd["username"] != u.username:
         if db.query(User).filter(User.username == upd["username"]).first():
             raise HTTPException(status_code=400, detail="用户名已存在")
@@ -83,6 +83,9 @@ async def delete_user(user_id: int, request: Request, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail="用户不存在")
     if u.id == user.get("id"):
         raise HTTPException(status_code=400, detail="不能删除自己")
+    # 名下仍有客户的业务员不允许删除，需先转让客户
+    if db.query(Customer).filter(Customer.assigned_salesman_id == user_id).first():
+        raise HTTPException(status_code=400, detail="该业务员名下还有客户，请先转让")
     db.delete(u)
     db.commit()
     return {"message": "用户已删除"}
@@ -100,25 +103,6 @@ async def change_password(data: PasswordChange, request: Request, db: Session = 
     u.password_hash = hash_password(data.new_password)
     db.commit()
     return {"message": "密码已修改"}
-
-
-@router.post("/verify-admin-password")
-async def verify_admin_password(data: dict, request: Request, db: Session = Depends(get_db)):
-    user = await get_current_user(request)
-    admin_only(user)
-    password = data.get("password", "")
-    target_user_id = data.get("user_id")
-    # 验证当前管理员密码
-    u = db.query(User).filter(User.id == user.get("user_id")).first()
-    if not u:
-        raise HTTPException(status_code=404, detail="用户不存在")
-    if not verify_password(password, u.password_hash):
-        raise HTTPException(status_code=400, detail="管理员密码错误")
-    # 返回目标用户的明文密码
-    target = db.query(User).filter(User.id == target_user_id).first()
-    if not target:
-        raise HTTPException(status_code=404, detail="目标用户不存在")
-    return {"password": target.password or ""}
 
 
 @router.post("/{user_id}/reset-password")
@@ -140,6 +124,5 @@ async def reset_user_password(user_id: int, data: dict, request: Request, db: Se
     if not target:
         raise HTTPException(status_code=404, detail="目标用户不存在")
     target.password_hash = hash_password(new_password)
-    target.password = new_password
     db.commit()
     return {"message": "密码已修改"}

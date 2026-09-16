@@ -34,7 +34,7 @@ docs/           — 文档（api.md, deployment.md, features.md）
 
 后端运行在名为 `LLM` 的 Anaconda 环境中。
 
-- **Python 路径**: `D:\JetBrains\Anaconda3\envs\LLM\python.exe`
+- **Python 路径**: `D:\Softwaredata\miniforge3\envs\llm\python.exe`
 - **激活环境**: `conda activate LLM`
 - **安装依赖**: `pip install -r backend/requirements.txt`
 

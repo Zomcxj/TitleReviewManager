@@ -65,7 +65,7 @@ class CustomerUpdate(BaseModel):
     position: Optional[str] = Field(None, max_length=100)
     professional_years: Optional[int] = None
     project_experiences: Optional[str] = None
-    assigned_salesman_id: Optional[int] = None
+    # 注意：assigned_salesman_id 已移除 —— 客户归属变更必须走转让接口（有审计和通知）
 
 
 class CustomerResponse(BaseModel):
@@ -100,10 +100,9 @@ class ApplicationUpdate(BaseModel):
     professional_category: Optional[str] = Field(None, max_length=100)
     title_level: Optional[str] = Field(None, max_length=100)
     status: Optional[str] = Field(None, max_length=20)
-    assigned_salesman_id: Optional[int] = None
+    # submitted_at / assigned_salesman_id 已移除：submitted_at 由提交动作写入，客户归属属于 Customer
     assigned_reviewer_id: Optional[int] = None
     institution_name: Optional[str] = Field(None, max_length=200)
-    submitted_at: Optional[datetime] = None
 
 
 class ApplicationResponse(BaseModel):

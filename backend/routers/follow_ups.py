@@ -5,7 +5,7 @@ from database import get_db
 from models import FollowUp, Customer, User
 from schemas import FollowUpResponse, FollowUpCreate
 from auth import get_current_user
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List
 from routers.notifications import create_notification
 
@@ -47,6 +47,9 @@ async def create_follow_up(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    # 仅业务员/管理员可创建跟进记录（审核员返回 403）
+    if current_user.get("role") not in ("salesman", "admin"):
+        raise HTTPException(status_code=403, detail="仅业务员和管理员可创建跟进记录")
     customer = db.query(Customer).filter(Customer.id == data.customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
@@ -62,9 +65,13 @@ async def create_follow_up(
     db.add(follow_up)
     db.flush()
     
+    # 更新客户最后跟进时间（SLA 自动回收机制的依赖）
+    customer.last_follow_up_at = datetime.utcnow()
+    
     if data.next_follow_up_at:
         salesman_id = customer.assigned_salesman_id
-        if salesman_id:
+        # 创建者就是该客户的归属业务员时不给自己发通知
+        if salesman_id and salesman_id != current_user.get("id"):
             create_notification(
                 db=db,
                 user_id=salesman_id,
@@ -90,6 +97,9 @@ async def delete_follow_up(
     follow_up = db.query(FollowUp).filter(FollowUp.id == follow_up_id).first()
     if not follow_up:
         raise HTTPException(status_code=404, detail="跟进记录不存在")
+    # 仅记录创建者本人或管理员可删除
+    if follow_up.user_id != current_user.get("id") and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="仅记录创建者或管理员可删除跟进记录")
     
     db.delete(follow_up)
     db.commit()
