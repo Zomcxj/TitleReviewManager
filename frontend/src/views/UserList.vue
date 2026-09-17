@@ -16,6 +16,11 @@
           {{ row.real_name || '-' }}
         </template>
       </el-table-column>
+      <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.email || '-' }}
+        </template>
+      </el-table-column>
       <el-table-column prop="role" label="角色" width="120" align="center">
         <template #default="{ row }">
           <el-tag :type="roleTagType(row.role)" size="small" effect="dark" round>
@@ -67,6 +72,9 @@
         <el-form-item label="姓名" prop="real_name">
           <el-input v-model="form.real_name" placeholder="真实姓名" />
         </el-form-item>
+        <el-form-item label="邮箱" prop="email">
+          <el-input v-model="form.email" type="email" placeholder="用于接收邮件通知（选填）" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showCreateDialog = false">取消</el-button>
@@ -89,6 +97,9 @@
         </el-form-item>
         <el-form-item label="姓名">
           <el-input v-model="editForm.real_name" />
+        </el-form-item>
+        <el-form-item label="邮箱">
+          <el-input v-model="editForm.email" type="email" placeholder="用于接收邮件通知（选填）" />
         </el-form-item>
         <el-form-item label="密码">
           <el-input v-model="editForm.password" type="password" show-password placeholder="重置密码（留空则不修改）" />
@@ -133,8 +144,8 @@ const showEditDialog = ref(false)
 const showPasswordDialog = ref(false)
 const currentUserId = computed(() => authStore.user?.id)
 
-const form = ref({ username: '', password: '', role: 'salesman', real_name: '' })
-const editForm = ref({ id: 0, username: '', role: '', real_name: '', password: '' })
+const form = ref({ username: '', password: '', role: 'salesman', real_name: '', email: '' })
+const editForm = ref({ id: 0, username: '', role: '', real_name: '', password: '', email: '' })
 const pwForm = ref({ admin_password: '', new_password: '' })
 const pwTargetUser = ref<any>(null)
 const formRef = ref<any>(null)
@@ -169,7 +180,7 @@ async function loadUsers() {
 }
 
 function resetForm() {
-  form.value = { username: '', password: '', role: 'salesman', real_name: '' }
+  form.value = { username: '', password: '', role: 'salesman', real_name: '', email: '' }
 }
 
 async function handleCreate() {
@@ -178,7 +189,13 @@ async function handleCreate() {
   if (!valid) return
   submitting.value = true
   try {
-    await api.post('/api/users/', form.value)
+    await api.post('/api/users/', {
+      username: form.value.username,
+      password: form.value.password,
+      role: form.value.role,
+      real_name: form.value.real_name,
+      email: form.value.email || null,
+    })
     ElMessage.success('用户已创建')
     showCreateDialog.value = false
     loadUsers()
@@ -190,14 +207,26 @@ async function handleCreate() {
 }
 
 function handleEdit(row: any) {
-  editForm.value = { id: row.id, username: row.username, role: row.role, real_name: row.real_name || '', password: '' }
+  editForm.value = {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    real_name: row.real_name || '',
+    password: '',
+    email: row.email || '',
+  }
   showEditDialog.value = true
 }
 
 async function handleUpdate() {
   submitting.value = true
   try {
-    const body: any = { username: editForm.value.username, role: editForm.value.role, real_name: editForm.value.real_name }
+    const body: any = {
+      username: editForm.value.username,
+      role: editForm.value.role,
+      real_name: editForm.value.real_name,
+      email: editForm.value.email || null,
+    }
     if (editForm.value.password) body.password = editForm.value.password
     await api.put(`/api/users/${editForm.value.id}`, body)
     ElMessage.success('已保存')

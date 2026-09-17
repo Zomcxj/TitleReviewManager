@@ -13,6 +13,7 @@ class UserResponse(BaseModel):
     username: str
     role: str
     real_name: Optional[str] = None
+    email: Optional[str] = None
     created_at: Optional[datetime] = None
 
     class Config:
@@ -24,6 +25,7 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=6, max_length=128)
     role: str = Field(...)
     real_name: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=120)
 
 
 class UserUpdate(BaseModel):
@@ -31,6 +33,7 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     real_name: Optional[str] = Field(None, max_length=50)
     password: Optional[str] = Field(None, min_length=6, max_length=128)
+    email: Optional[str] = Field(None, max_length=120)
 
 
 class PasswordChange(BaseModel):

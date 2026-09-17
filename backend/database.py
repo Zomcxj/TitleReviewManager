@@ -1,9 +1,12 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 DB_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -24,6 +27,21 @@ if DATABASE_URL.startswith("sqlite"):
     _connect_args["check_same_thread"] = False
 
 engine = create_engine(DATABASE_URL, connect_args=_connect_args)
+
+
+# SQLite 默认不强制外键约束，会导致删除父记录后留下悬挂引用。
+# 通过 PRAGMA 在每个连接上启用，行为与 PostgreSQL 对齐。
+if DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+        try:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+        except Exception as e:
+            logger.warning(f"启用 SQLite 外键约束失败: {e}")
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

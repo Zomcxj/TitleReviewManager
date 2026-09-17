@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
+from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from database import get_db
@@ -6,9 +8,76 @@ from models import Customer, Application, User, Material
 from auth import get_current_user
 from datetime import datetime, timezone
 import openpyxl
+import os
+import tempfile
 from io import BytesIO
 
 router = APIRouter(prefix="/api/exports", tags=["数据导出"])
+
+EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+# 流式读取临时文件的块大小
+STREAM_CHUNK_SIZE = 64 * 1024
+# 单次导出行数上限，超出部分截断并在表尾注明
+MAX_EXPORT_ROWS = 50000
+# 数据库流式游标每次预取的记录数
+YIELD_PER = 500
+
+# 列宽改为固定值：write_only 模式无法在写完后遍历 ws.columns 计算
+CUSTOMER_COLUMN_WIDTHS = [14, 22, 14, 12, 16, 10, 28, 16, 10, 20, 16, 18]
+APPLICATION_COLUMN_WIDTHS = [22, 14, 22, 16, 18, 18]
+
+
+def _set_column_widths(ws, widths):
+    """write_only 模式下必须在写数据前设置列宽。"""
+    for i, width in enumerate(widths, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
+
+
+def _safe_remove(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _iter_file(path, chunk_size=STREAM_CHUNK_SIZE):
+    """分块读取临时文件，正常结束或客户端中途断开都在 finally 里删除临时文件。"""
+    try:
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+    finally:
+        _safe_remove(path)
+
+
+def _stream_write_only_workbook(title, build_rows, disposition):
+    """把 write_only 工作簿落盘到临时文件后分块流式返回。
+
+    build_rows(ws) 负责在 write_only worksheet 上逐行 append。
+    工作簿在返回响应前已完整写盘，因此流式阶段不再访问数据库会话。
+    临时文件由两重保障清理：生成器 finally + BackgroundTask 兜底
+    （防止响应对象未被消费时残留临时文件）。
+    """
+    fd, tmp_path = tempfile.mkstemp(suffix=".xlsx", prefix="export_")
+    os.close(fd)
+    try:
+        wb = openpyxl.Workbook(write_only=True)
+        ws = wb.create_sheet(title=title)
+        build_rows(ws)
+        wb.save(tmp_path)
+    except Exception:
+        _safe_remove(tmp_path)
+        raise
+
+    return StreamingResponse(
+        _iter_file(tmp_path),
+        media_type=EXCEL_MEDIA_TYPE,
+        headers={"Content-Disposition": disposition},
+        background=BackgroundTask(_safe_remove, tmp_path),
+    )
 
 
 @router.get("/template")
@@ -53,7 +122,7 @@ async def download_excel_template(request: Request):
 
     return Response(
         content=output.read(),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        media_type=EXCEL_MEDIA_TYPE,
         headers={
             "Content-Disposition": f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{filename}',
         },
@@ -73,13 +142,13 @@ async def export_customers(
     query = db.query(Customer, Application).join(
         Application, Customer.id == Application.customer_id
     )
-    
+
     if current_user.get("role") == "salesman":
         query = query.filter(Customer.assigned_salesman_id == current_user.get("id"))
-    
+
     if status:
         query = query.filter(Application.status == status)
-    
+
     if keyword:
         query = query.filter(
             or_(
@@ -89,59 +158,52 @@ async def export_customers(
                 Customer.work_unit.like(f"%{keyword}%"),
             )
         )
-    
+
     query = query.order_by(Application.id.desc())
-    results = query.all()
-    
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "客户列表"
-    
+
     headers = [
         "客户姓名", "身份证号", "手机号", "学历", "现职称", "获聘年份",
         "工作单位", "岗位", "专业年限", "申报批次", "当前状态", "创建时间",
     ]
-    ws.append(headers)
-    
-    for customer, app in results:
-        ws.append([
-            customer.name,
-            customer.id_number + "\t",
-            customer.phone or "",
-            customer.education or "",
-            customer.current_title or "",
-            customer.current_title_year or "",
-            customer.work_unit or "",
-            customer.position or "",
-            customer.professional_years or "",
-            app.batch_number if app else "",
-            app.status if app else "",
-            customer.created_at.strftime("%Y-%m-%d %H:%M") if customer.created_at else "",
-        ])
-    
-    for col in ws.columns:
-        max_length = 0
-        column = col[0].column_letter
-        for cell in col:
-            try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
-            except:
-                pass
-        adjusted_width = (max_length + 2) if max_length < 50 else 50
-        ws.column_dimensions[column].width = adjusted_width
-    
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-    
+
+    def build_rows(ws):
+        _set_column_widths(ws, CUSTOMER_COLUMN_WIDTHS)
+        ws.append(headers)
+
+        written = 0
+        truncated = False
+        # 多取 1 行用于判断是否被截断；yield_per 走流式游标，不一次性载入内存
+        rows = query.limit(MAX_EXPORT_ROWS + 1).yield_per(YIELD_PER)
+        for customer, app in rows:
+            if written >= MAX_EXPORT_ROWS:
+                truncated = True
+                continue
+            ws.append([
+                customer.name,
+                customer.id_number + "\t",
+                customer.phone or "",
+                customer.education or "",
+                customer.current_title or "",
+                customer.current_title_year or "",
+                customer.work_unit or "",
+                customer.position or "",
+                customer.professional_years or "",
+                app.batch_number if app else "",
+                app.status if app else "",
+                customer.created_at.strftime("%Y-%m-%d %H:%M") if customer.created_at else "",
+            ])
+            written += 1
+
+        if truncated:
+            ws.append([f"（数据量超限，仅导出前 {MAX_EXPORT_ROWS} 条）"])
+
     from urllib.parse import quote
     filename = quote(f"客户列表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
-    
-    return Response(
-        content=output.read(),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+
+    return _stream_write_only_workbook(
+        "客户列表",
+        build_rows,
+        f'attachment; filename="{filename}"',
     )
 
 
@@ -154,57 +216,51 @@ async def export_applications(
     if current_user.get("role") not in ("admin", "salesman"):
         raise HTTPException(status_code=403, detail="仅业务员和管理员可导出")
 
-    query = db.query(Application).join(Customer)
-    
+    query = db.query(Application, Customer).join(
+        Customer, Application.customer_id == Customer.id
+    )
+
     if current_user.get("role") == "salesman":
         query = query.filter(Customer.assigned_salesman_id == current_user.get("id"))
-    
+
     if status:
         query = query.filter(Application.status == status)
-    
+
     query = query.order_by(Application.id.desc())
-    applications = query.all()
-    
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "申报批次"
-    
+
     headers = [
         "批次号", "客户姓名", "客户 ID 号", "申报状态", "创建时间", "更新时间",
     ]
-    ws.append(headers)
-    
-    for app in applications:
-        ws.append([
-            app.batch_number,
-            app.customer.name,
-            app.customer.id_number + "\t",
-            app.status,
-            app.created_at.strftime("%Y-%m-%d %H:%M") if app.created_at else "",
-            app.updated_at.strftime("%Y-%m-%d %H:%M") if app.updated_at else "",
-        ])
-    
-    for col in ws.columns:
-        max_length = 0
-        column = col[0].column_letter
-        for cell in col:
-            try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
-            except:
-                pass
-        adjusted_width = (max_length + 2) if max_length < 50 else 50
-        ws.column_dimensions[column].width = adjusted_width
-    
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-    
+
+    def build_rows(ws):
+        _set_column_widths(ws, APPLICATION_COLUMN_WIDTHS)
+        ws.append(headers)
+
+        written = 0
+        truncated = False
+        rows = query.limit(MAX_EXPORT_ROWS + 1).yield_per(YIELD_PER)
+        for app, customer in rows:
+            if written >= MAX_EXPORT_ROWS:
+                truncated = True
+                continue
+            ws.append([
+                app.batch_number,
+                customer.name,
+                customer.id_number + "\t",
+                app.status,
+                app.created_at.strftime("%Y-%m-%d %H:%M") if app.created_at else "",
+                app.updated_at.strftime("%Y-%m-%d %H:%M") if app.updated_at else "",
+            ])
+            written += 1
+
+        if truncated:
+            ws.append([f"（数据量超限，仅导出前 {MAX_EXPORT_ROWS} 条）"])
+
     from urllib.parse import quote
     filename = quote(f"申报批次_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
-    
-    return Response(
-        content=output.read(),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+
+    return _stream_write_only_workbook(
+        "申报批次",
+        build_rows,
+        f'attachment; filename="{filename}"',
     )

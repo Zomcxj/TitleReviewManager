@@ -9,9 +9,14 @@
     <div class="notification-panel">
       <div class="notification-header">
         <h4>消息通知</h4>
-        <el-button text type="primary" size="small" @click="markAllAsRead" v-if="unreadCount > 0">
-          全部已读
-        </el-button>
+        <div class="notification-actions">
+          <el-button text type="primary" size="small" @click="markAllAsRead" v-if="unreadCount > 0">
+            全部已读
+          </el-button>
+          <el-button text type="info" size="small" @click="clearRead" v-if="notifications.length > 0">
+            清理已读
+          </el-button>
+        </div>
       </div>
       
       <div class="notification-list" v-loading="loading">
@@ -35,6 +40,16 @@
             <div class="notification-text">{{ n.content }}</div>
             <div class="notification-time">{{ formatTime(n.created_at) }}</div>
           </div>
+          <el-button
+            class="notification-delete"
+            text
+            type="danger"
+            size="small"
+            title="删除"
+            @click.stop="removeNotification(n.id)"
+          >
+            <el-icon :size="14"><Delete /></el-icon>
+          </el-button>
         </div>
       </div>
       
@@ -47,6 +62,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
 interface Notification {
@@ -95,6 +111,32 @@ async function markAllAsRead() {
     await api.post('/api/notifications/read-all')
     notifications.value.forEach(n => n.is_read = true)
     unreadCount.value = 0
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+async function removeNotification(id: number) {
+  try {
+    await api.delete(`/api/notifications/${id}`)
+    notifications.value = notifications.value.filter(n => n.id !== id)
+    await fetchNotifications()
+    ElMessage.success('已删除')
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+async function clearRead() {
+  try {
+    await ElMessageBox.confirm('确定清理所有已读通知？', '清理确认', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    const { data } = await api.delete('/api/notifications/clear-read')
+    await fetchNotifications()
+    ElMessage.success(data?.deleted ? `已清理 ${data.deleted} 条已读通知` : '已清理')
   } catch (e) {
     console.error(e)
   }
@@ -163,6 +205,16 @@ onUnmounted(() => {
   color: #303133;
 }
 
+.notification-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.notification-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
 .notification-list {
   max-height: 300px;
   overflow-y: auto;
@@ -220,6 +272,19 @@ onUnmounted(() => {
   font-size: 11px;
   color: #909399;
   margin-top: 6px;
+}
+
+.notification-delete {
+  flex-shrink: 0;
+  align-self: flex-start;
+  padding: 2px;
+  height: auto;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.notification-item:hover .notification-delete {
+  opacity: 1;
 }
 
 .empty-state {

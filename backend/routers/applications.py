@@ -291,6 +291,21 @@ async def submit_to_institution(
         new_value={"detail": f"报送机构: {institution_name}"},
     )
     db.add(log)
+
+    # 通知审核员与管理员：有新批次已报送机构，需关注后续反馈
+    customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
+    customer_name = customer.name if customer else "客户"
+    for u in db.query(User).filter(User.role.in_(["reviewer", "admin"])).all():
+        create_notification(
+            db=db,
+            user_id=u.id,
+            title="批次已提交评审机构",
+            content=f"客户 {customer_name} 的批次 {app.batch_number} 已提交至 {institution_name or '评审机构'}，请关注后续反馈",
+            type="status_change",
+            related_type="application",
+            related_id=app.id,
+        )
+
     db.commit()
     db.refresh(app)
     return ApplicationResponse.model_validate(app).model_dump()

@@ -78,8 +78,8 @@
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/api/imports/customers` | POST | Excel 批量导入客户 |
-| `/api/exports/customers` | POST | 导出客户列表（salesman/admin） |
-| `/api/exports/applications` | POST | 导出申报批次（salesman/admin） |
+| `/api/exports/customers` | POST | 导出客户列表（salesman/admin，流式导出，上限 5 万行） |
+| `/api/exports/applications` | POST | 导出申报批次（salesman/admin，流式导出，上限 5 万行） |
 | `/api/batch/assign-customers` | POST | 批量分配客户（管理员；自动设置 24h SLA） |
 | `/api/batch/review` | POST | 批量审核 |
 | `/api/batch/release-customers` | POST | 批量释放到公海（管理员） |
@@ -94,6 +94,8 @@
 | `/api/notifications/read-all` | POST | 全部已读 |
 | `/api/notifications/{id}` | DELETE | 删除单条通知 |
 | `/api/notifications/clear-read` | DELETE | 清理本人已读通知 |
+
+> 通知可配置外部渠道推送（邮件/Webhook），见 `.env.example` 的「外部通知渠道」一节。
 | `/api/follow-ups/customer/{id}` | GET | 跟进记录 |
 | `/api/follow-ups/` | POST | 添加跟进（salesman/admin；更新客户最后跟进时间） |
 | `/api/follow-ups/{id}` | DELETE | 删除跟进（创建者或管理员） |
@@ -112,6 +114,7 @@
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/api/audit/logs/` | GET | 审计日志（管理员） |
+| `/api/audit/export` | GET | 导出审计日志 xlsx（管理员，流式导出，上限 1 万行） |
 
 ## 数据看板
 

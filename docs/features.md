@@ -127,6 +127,28 @@
 - 登录成功/失败/锁定拒绝均记入审计日志（含 IP、User-Agent）
 - 材料下载留痕（PII 合规：记录下载人与文件名）
 
+### 外部通知渠道（可选）
+- 站内通知始终生效；配置后可额外推送到外部渠道，用户不登录也能收到提醒
+- **邮件通知**：SMTP 配置（支持 SSL / STARTTLS / 无认证内网中继）
+- **Webhook 通知**：兼容企业微信/钉钉/飞书机器人（POST JSON）
+- 按通知类型过滤（默认只推 status_change / sla_overdue / pool_recovery，可配置为全部）
+- 异步发送（后台线程），未配置时静默跳过，发送失败不影响业务
+- 管理员可在用户管理中维护收件邮箱
+
+### 数据一致性
+- **SQLite 外键约束**：通过 PRAGMA foreign_keys=ON 在每个连接启用，行为与 PostgreSQL 对齐，避免悬挂引用
+
+### 大数据量导出
+- 导出改用 openpyxl write_only 模式 + SQLAlchemy yield_per 流式游标 + StreamingResponse
+- 实测 2 万行导出内存峰值从 160.7 MiB 降至 17.1 MiB（约 9.4 倍）
+- 导出上限保护（客户/批次 5 万行、审计 1 万行），超出追加截断提示
+- 临时文件用 BackgroundTask 兜底清理，异常/中断场景不残留
+
+### 材料在线预览
+- 图片内联、PDF 内嵌、**docx 本地解析预览**（mammoth → HTML + DOMPurify 净化）
+- 敏感材料全程不出本域，不使用任何第三方在线预览服务
+- .doc 旧二进制格式不支持解析，引导下载
+
 ### 部署
 - Docker 容器化（`docker-compose.yml`）
 - 支持 SQLite（开发）/ PostgreSQL（生产）

@@ -160,13 +160,53 @@
       </template>
     </el-dialog>
 
-    <!-- Image preview dialog -->
-    <el-dialog v-model="previewVisible" :title="previewMaterial?.filename || '预览'" width="90%" destroy-on-close class="preview-dialog" top="3vh" :close-on-click-modal="true">
+    <!-- File preview dialog -->
+    <el-dialog
+      v-model="previewVisible"
+      :title="previewMaterial?.filename || '预览'"
+      width="90%"
+      destroy-on-close
+      class="preview-dialog"
+      top="3vh"
+      :close-on-click-modal="true"
+      @closed="resetDocxPreview"
+    >
       <div class="preview-wrapper" v-if="previewType === 'image'">
         <img :src="previewSrc" class="preview-img" />
       </div>
       <div v-else-if="previewType === 'pdf'" class="pdf-preview">
         <el-button type="primary" @click="openPdfTab">在新标签页中打开 PDF</el-button>
+      </div>
+      <!-- docx 纯前端本地解析预览 -->
+      <div
+        v-else-if="previewType === 'docx'"
+        class="docx-preview"
+        v-loading="docxLoading"
+        element-loading-text="文档解析中…"
+        element-loading-background="rgba(15, 23, 42, 0.85)"
+      >
+        <div v-if="docxError" class="docx-tip">
+          <el-icon class="docx-tip-icon"><WarningFilled /></el-icon>
+          <span>{{ docxError }}</span>
+          <el-button type="primary" size="small" @click="downloadFile(previewMaterial?.id)">
+            <el-icon><Download /></el-icon> 下载文件
+          </el-button>
+        </div>
+        <div v-else-if="docxHtml" class="docx-body" v-html="docxHtml"></div>
+        <div v-else-if="!docxLoading" class="docx-tip">
+          <el-icon class="docx-tip-icon"><WarningFilled /></el-icon>
+          <span>文档内容为空</span>
+        </div>
+      </div>
+      <!-- .doc 旧二进制格式 / 其他不支持的类型：无法本地解析 -->
+      <div v-else-if="previewType === 'doc'" class="docx-preview">
+        <div class="docx-tip">
+          <el-icon class="docx-tip-icon"><WarningFilled /></el-icon>
+          <span>{{ unsupportedTip }}</span>
+          <el-button type="primary" size="small" @click="downloadFile(previewMaterial?.id)">
+            <el-icon><Download /></el-icon> 下载文件
+          </el-button>
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -176,7 +216,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import api from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowUp, ArrowDown, CircleCheck } from '@element-plus/icons-vue'
+import { ArrowUp, ArrowDown, CircleCheck, WarningFilled } from '@element-plus/icons-vue'
+import { docxToHtml, fetchMaterialBuffer, getFileExt } from '../utils/docPreview'
 
 const props = defineProps<{ applicationId: number; canSubmit?: boolean }>()
 const emit = defineEmits(['submit-review'])
@@ -190,8 +231,15 @@ const loading = ref(false)
 const expandedGroups = ref<Set<string>>(new Set())
 const previewVisible = ref(false)
 const previewSrc = ref('')
-const previewType = ref<'image' | 'pdf' | ''>('')
+const previewType = ref<'image' | 'pdf' | 'docx' | 'doc' | ''>('')
 const previewMaterial = ref<any>(null)
+const docxHtml = ref('')
+const docxLoading = ref(false)
+const docxError = ref('')
+/** 不支持预览类型（.doc / 未知类型）的提示文案 */
+const unsupportedTip = ref('')
+/** 递增请求序号，避免快速切换文件时旧请求的结果覆盖新内容 */
+let docxRequestSeq = 0
 const rejectDetailVisible = ref(false)
 const rejectDetailItem = ref<any>(null)
 const rejectDetailData = ref<any>({})
@@ -200,6 +248,12 @@ const showChecklist = ref(false)
 
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 const PDF_EXTS = ['.pdf']
+const DOCX_EXTS = ['.docx']
+const DOC_EXTS = ['.doc']
+
+/** .doc 为旧版 Word 二进制格式，mammoth 无法解析，只提供下载 */
+const DOC_UNSUPPORTED_TIP = '.doc 为旧版 Word 二进制格式，暂不支持在线预览，请下载查看'
+const UNSUPPORTED_TIP = '该文件类型不支持在线预览，请下载查看'
 
 const groupedMaterials = computed(() => {
   const groups: Record<string, any[]> = {}
@@ -333,15 +387,64 @@ async function deleteMaterial(materialId: number, version: number) {
   } catch {}
 }
 
+function materialFileUrl(materialId: number) {
+  return `/api/applications/${props.applicationId}/materials/file/${materialId}`
+}
+
+function resetDocxPreview() {
+  docxHtml.value = ''
+  docxError.value = ''
+  docxLoading.value = false
+  docxRequestSeq++
+}
+
+async function loadDocxPreview(item: any) {
+  const seq = ++docxRequestSeq
+  docxLoading.value = true
+  docxError.value = ''
+  docxHtml.value = ''
+  try {
+    // 同源 + Cookie 鉴权本地取回，交给 mammoth 在浏览器内解析，不上传任何第三方
+    const buffer = await fetchMaterialBuffer(materialFileUrl(item.id))
+    const html = await docxToHtml(buffer)
+    if (seq !== docxRequestSeq) return
+    docxHtml.value = html
+  } catch (err) {
+    if (seq !== docxRequestSeq) return
+    console.error('[docx preview] 解析失败', err)
+    docxError.value = '文档解析失败，请下载查看'
+  } finally {
+    if (seq === docxRequestSeq) docxLoading.value = false
+  }
+}
+
 function previewFile(item: any) {
-  const ext = '.' + (item.filename || '').split('.').pop()?.toLowerCase()
+  // 切换文件时清理上一次的 docx 解析状态与在途请求
+  resetDocxPreview()
+  const ext = getFileExt(item.filename)
   if (IMAGE_EXTS.includes(ext)) {
     previewType.value = 'image'
     previewMaterial.value = item
-    previewSrc.value = `/api/applications/${props.applicationId}/materials/file/${item.id}`
+    previewSrc.value = materialFileUrl(item.id)
     previewVisible.value = true
   } else if (PDF_EXTS.includes(ext)) {
     previewType.value = 'pdf'
+    previewMaterial.value = item
+    previewVisible.value = true
+  } else if (DOCX_EXTS.includes(ext)) {
+    previewType.value = 'docx'
+    previewMaterial.value = item
+    previewVisible.value = true
+    loadDocxPreview(item)
+  } else if (DOC_EXTS.includes(ext)) {
+    previewType.value = 'doc'
+    unsupportedTip.value = DOC_UNSUPPORTED_TIP
+    previewMaterial.value = item
+    previewVisible.value = true
+  } else {
+    // 其他未知类型（含无扩展名）：同样给出下载引导
+    previewType.value = 'doc'
+    unsupportedTip.value = UNSUPPORTED_TIP
     previewMaterial.value = item
     previewVisible.value = true
   }
@@ -349,7 +452,7 @@ function previewFile(item: any) {
 
 function openPdfTab() {
   if (previewMaterial.value) {
-    window.open(`/api/applications/${props.applicationId}/materials/file/${previewMaterial.value.id}`, '_blank')
+    window.open(materialFileUrl(previewMaterial.value.id), '_blank')
   }
   previewVisible.value = false
 }
@@ -634,5 +737,136 @@ watch(() => props.applicationId, loadMaterials, { immediate: true })
   justify-content: center;
   align-items: center;
   padding: 40px;
+}
+
+/* ---------- docx 本地解析预览 ---------- */
+.docx-preview {
+  width: 100%;
+  height: 85vh;
+  overflow: auto;
+  background: #0f172a;
+  padding: 24px 16px;
+  box-sizing: border-box;
+}
+
+.docx-body {
+  max-width: 820px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 6px;
+  padding: 48px 56px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  color: #1e293b;
+  font-size: 15px;
+  line-height: 1.8;
+  font-family: "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.docx-body :deep(p) {
+  margin: 0 0 0.9em;
+}
+
+.docx-body :deep(h1),
+.docx-body :deep(h2),
+.docx-body :deep(h3),
+.docx-body :deep(h4),
+.docx-body :deep(h5),
+.docx-body :deep(h6) {
+  margin: 1.2em 0 0.6em;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #0f172a;
+}
+.docx-body :deep(h1) { font-size: 22px; }
+.docx-body :deep(h2) { font-size: 19px; }
+.docx-body :deep(h3) { font-size: 17px; }
+.docx-body :deep(h4),
+.docx-body :deep(h5),
+.docx-body :deep(h6) { font-size: 15px; }
+
+.docx-body :deep(strong),
+.docx-body :deep(b) {
+  font-weight: 600;
+}
+
+.docx-body :deep(ul),
+.docx-body :deep(ol) {
+  margin: 0 0 0.9em;
+  padding-left: 2em;
+}
+
+.docx-body :deep(li) {
+  margin: 0.25em 0;
+}
+
+.docx-body :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 1em;
+  font-size: 14px;
+}
+
+.docx-body :deep(th),
+.docx-body :deep(td) {
+  border: 1px solid #cbd5e1;
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.docx-body :deep(th) {
+  background: #f1f5f9;
+  font-weight: 600;
+}
+
+.docx-body :deep(img) {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0.5em auto;
+}
+
+.docx-body :deep(a) {
+  color: #4f46e5;
+  text-decoration: underline;
+}
+
+.docx-body :deep(blockquote) {
+  margin: 0 0 1em;
+  padding: 4px 14px;
+  border-left: 3px solid #cbd5e1;
+  color: #475569;
+}
+
+.docx-body :deep(pre),
+.docx-body :deep(code) {
+  font-family: Consolas, Monaco, "Courier New", monospace;
+  background: #f8fafc;
+  border-radius: 4px;
+}
+.docx-body :deep(pre) {
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+
+.docx-tip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 320px;
+  color: #cbd5e1;
+  font-size: 14px;
+  text-align: center;
+  padding: 24px;
+}
+
+.docx-tip-icon {
+  font-size: 34px;
+  color: #f59e0b;
 }
 </style>

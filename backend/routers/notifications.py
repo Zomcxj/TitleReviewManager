@@ -135,7 +135,11 @@ def create_notification(
     related_type: str = None,
     related_id: int = None,
 ):
-    """工具函数：创建通知。只加入会话，不提交 —— 由调用方统一 commit，保证业务原子性。"""
+    """工具函数：创建通知。只加入会话，不提交 —— 由调用方统一 commit，保证业务原子性。
+
+    同时异步推送到外部渠道（邮件/Webhook），让用户不登录也能收到重要提醒。
+    外部渠道未配置时静默跳过，发送失败也不影响站内通知。
+    """
     notification = Notification(
         user_id=user_id,
         title=title,
@@ -145,4 +149,18 @@ def create_notification(
         related_id=related_id,
     )
     db.add(notification)
+
+    # 外部渠道推送（后台线程，失败不影响业务）
+    try:
+        from utils.notify_channels import notify_external
+        user = db.query(User).filter(User.id == user_id).first()
+        notify_external(
+            notify_type=type,
+            title=title,
+            content=content,
+            email=getattr(user, "email", None) if user else None,
+        )
+    except Exception:
+        pass
+
     return notification

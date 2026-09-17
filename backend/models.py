@@ -26,6 +26,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False)
     real_name = Column(String(50))
+    email = Column(String(120), nullable=True, comment="邮箱，用于外部通知推送")
     created_at = Column(DateTime, default=datetime.utcnow)
     is_deleted = Column(Boolean, default=False, nullable=False, index=True, comment="软删除标记")
     deleted_at = Column(DateTime, nullable=True)
