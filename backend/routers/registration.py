@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import RegistrationToken, Customer, Application, OperationLog, User
 from schemas import RegistrationTokenCreate, RegistrationTokenResponse, SelfRegisterRequest, CustomerResponse
+from enums import CustomerSource
 from auth import get_current_user
 from datetime import datetime, timedelta, timezone
 import secrets
@@ -155,7 +156,9 @@ async def self_register(
     if token.max_uses > 0 and token.use_count >= token.max_uses:
         raise HTTPException(status_code=400, detail="注册链接使用次数已达上限")
 
-    existing = db.query(Customer).filter(Customer.id_number == data.id_number).first()
+    existing = db.query(Customer).filter(
+        Customer.id_number == data.id_number, Customer.is_deleted == False
+    ).first()
     if existing:
         raise HTTPException(status_code=400, detail="该身份证号已存在")
 
@@ -171,6 +174,7 @@ async def self_register(
         professional_years=data.professional_years,
         project_experiences=data.project_experiences,
         assigned_salesman_id=token.salesman_id,
+        source=data.source or CustomerSource.SELF.value,
     )
     db.add(customer)
     db.flush()

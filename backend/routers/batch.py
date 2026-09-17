@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Customer, Application, User
-from auth import get_current_user
+from models import Customer, Application, User, OperationLog
+from auth import get_current_user, require_role
 from datetime import datetime, timedelta
 from routers.notifications import create_notification
+from routers.applications import build_material_checklist
 from typing import List
 
 router = APIRouter(prefix="/api/batch", tags=["批量操作"])
@@ -144,3 +145,163 @@ async def batch_release_customers(
     
     db.commit()
     return {"message": f"成功释放 {updated_count} 个客户到公海池"}
+
+
+def _skip(application_id: int, batch_number, reason: str) -> dict:
+    return {
+        "application_id": application_id,
+        "batch_number": batch_number,
+        "reason": reason,
+    }
+
+
+@router.post("/submit-to-institution")
+async def batch_submit_to_institution(
+    application_ids: List[int] = Body(..., embed=True),
+    institution_name: str = Body("", embed=True),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role("admin", "salesman")),
+):
+    """批量提交评审机构：逐条校验状态/归属/材料完备性，通过者统一流转并通知。"""
+    from enums import ApplicationStatus
+
+    target_status = ApplicationStatus.SUBMITTED.value
+    ready_status = ApplicationStatus.COMPLETED.value
+    role = current_user.get("role")
+    user_id = current_user.get("user_id") or current_user.get("id")
+    username = current_user.get("username", "")
+    institution_name = (institution_name or "").strip()
+
+    success = 0
+    skipped = []
+
+    for application_id in application_ids:
+        app = (
+            db.query(Application)
+            .filter(Application.id == application_id, Application.is_deleted == False)  # noqa: E712
+            .first()
+        )
+        if not app:
+            skipped.append(_skip(application_id, None, "批次不存在"))
+            continue
+        if app.status != ready_status:
+            skipped.append(_skip(application_id, app.batch_number, f"当前状态 {app.status} 不允许提交"))
+            continue
+
+        customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
+        if role == "salesman" and (not customer or customer.assigned_salesman_id != user_id):
+            skipped.append(_skip(application_id, app.batch_number, "无权操作"))
+            continue
+
+        checklist = build_material_checklist(db, app)
+        if not checklist["is_complete"]:
+            skipped.append(
+                _skip(application_id, app.batch_number, f"缺少必传材料：{'、'.join(checklist['missing'])}")
+            )
+            continue
+
+        app.status = target_status
+        app.submitted_at = datetime.utcnow()
+        app.institution_name = institution_name
+        if not app.cycle_year:
+            app.cycle_year = datetime.utcnow().year
+
+        db.add(OperationLog(
+            user_id=user_id,
+            username=username,
+            action="批量提交评审机构",
+            resource_type="application",
+            resource_id=app.id,
+            new_value={
+                "detail": f"报送机构: {institution_name}",
+                "batch_number": app.batch_number,
+            },
+        ))
+
+        # 通知：仅在客户有归属业务员时发送（业务员 + 全部管理员）
+        if customer and customer.assigned_salesman_id:
+            create_notification(
+                db=db,
+                user_id=customer.assigned_salesman_id,
+                title="已提交评审机构",
+                content=f"客户 {customer.name} 的申报批次 {app.batch_number} 已提交至评审机构",
+                type="status_change",
+                related_type="application",
+                related_id=app.id,
+            )
+            for admin in db.query(User).filter(User.role == "admin").all():
+                create_notification(
+                    db=db,
+                    user_id=admin.id,
+                    title="批次已提交评审机构",
+                    content=f"客户 {customer.name} 的申报批次 {app.batch_number} 已提交至评审机构",
+                    type="status_change",
+                    related_type="application",
+                    related_id=app.id,
+                )
+        success += 1
+
+    db.commit()
+    return {
+        "message": f"成功提交 {success} 个批次",
+        "success": success,
+        "skipped": skipped,
+    }
+
+
+@router.post("/remind")
+async def batch_remind(
+    application_ids: List[int] = Body(..., embed=True),
+    message: str = Body("", embed=True),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_role("admin", "salesman")),
+):
+    """批量催办：向批次所属客户的业务员发送催办通知。"""
+    role = current_user.get("role")
+    user_id = current_user.get("user_id") or current_user.get("id")
+    custom_message = (message or "").strip()
+
+    success = 0
+    skipped = []
+
+    for application_id in application_ids:
+        app = (
+            db.query(Application)
+            .filter(Application.id == application_id, Application.is_deleted == False)  # noqa: E712
+            .first()
+        )
+        if not app:
+            skipped.append(_skip(application_id, None, "批次不存在"))
+            continue
+
+        customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
+        if not customer or customer.is_deleted:
+            skipped.append(_skip(application_id, app.batch_number, "客户不存在"))
+            continue
+        if role == "salesman" and customer.assigned_salesman_id != user_id:
+            skipped.append(_skip(application_id, app.batch_number, "无权操作"))
+            continue
+        if not customer.assigned_salesman_id:
+            skipped.append(_skip(application_id, app.batch_number, "客户无归属业务员"))
+            continue
+
+        content = custom_message or (
+            f"客户 {customer.name} 的申报批次 {app.batch_number}（当前状态：{app.status}）需要尽快处理"
+        )
+        create_notification(
+            db=db,
+            user_id=customer.assigned_salesman_id,
+            title="材料催办提醒",
+            content=content,
+            type="batch_remind",
+            related_type="application",
+            related_id=app.id,
+        )
+        success += 1
+
+    db.commit()
+    return {
+        "message": f"已催办 {success} 个批次",
+        "success": success,
+        "skipped": skipped,
+    }

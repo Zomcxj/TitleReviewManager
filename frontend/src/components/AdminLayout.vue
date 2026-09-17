@@ -55,6 +55,18 @@
             <el-icon><Switch /></el-icon>
             <span>客户转让</span>
           </el-menu-item>
+          <el-menu-item v-if="authStore.isSalesman || authStore.isAdmin" index="/admin/finance" class="nav-item">
+            <el-icon><Money /></el-icon>
+            <span>收费管理</span>
+          </el-menu-item>
+          <el-menu-item v-if="authStore.isAdmin" index="/admin/system-config" class="nav-item">
+            <el-icon><Setting /></el-icon>
+            <span>系统配置</span>
+          </el-menu-item>
+          <el-menu-item v-if="authStore.isAdmin" index="/admin/recycle-bin" class="nav-item">
+            <el-icon><Delete /></el-icon>
+            <span>回收站</span>
+          </el-menu-item>
         </el-menu>
         
         <div class="user-bar">
@@ -121,6 +133,9 @@ import {
   Upload,
   Switch,
   Grid,
+  Money,
+  Setting,
+  Delete,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -140,6 +155,9 @@ const pageTitle = computed(() => {
     '/admin/audit-logs': '审计日志',
     '/admin/import': '批量导入',
     '/admin/transfer': '客户转让',
+    '/admin/finance': '收费与证书管理',
+    '/admin/system-config': '系统配置',
+    '/admin/recycle-bin': '回收站',
   }
   return map[route.path] || '职称评审管理系统'
 })

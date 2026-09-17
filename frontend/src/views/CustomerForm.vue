@@ -105,6 +105,13 @@
                   placeholder="年" style="width: 100%" />
               </el-form-item>
             </el-col>
+            <el-col :span="12">
+              <el-form-item label="您是通过什么渠道了解到我们的">
+                <el-select v-model="form.source" placeholder="请选择（选填）" clearable style="width: 100%">
+                  <el-option v-for="s in SOURCE_OPTIONS" :key="s" :label="s" :value="s" />
+                </el-select>
+              </el-form-item>
+            </el-col>
           </el-row>
         </div>
 
@@ -205,7 +212,11 @@ const form = reactive({
   work_unit: '',
   position: '',
   professional_years: undefined as number | undefined,
+  source: '',
 })
+
+// 与后端 enums.CustomerSource 保持一致（客户自助注册不单独提供该值）
+const SOURCE_OPTIONS = ['老客户转介绍', '网络渠道', '线下推广', '合作机构', '其他']
 
 interface Project {
   name: string
@@ -260,16 +271,26 @@ async function handleSubmit() {
   await formRef.value?.validate()
   submitting.value = true
   try {
+    const project_experiences = JSON.stringify(projects.value.filter(p => p.name))
     if (token && tokenValid.value) {
       await api.post('/api/registration-links/self-register', {
         token,
-        ...form,
-        project_experiences: JSON.stringify(projects.value.filter(p => p.name)),
+        name: form.name,
+        id_number: form.id_number,
+        phone: form.phone,
+        education: form.education,
+        current_title: form.current_title,
+        current_title_year: form.current_title_year,
+        work_unit: form.work_unit,
+        position: form.position,
+        professional_years: form.professional_years,
+        project_experiences,
+        source: form.source || undefined,
       })
     } else {
       await api.post('/api/customers/', {
         ...form,
-        project_experiences: JSON.stringify(projects.value.filter(p => p.name)),
+        project_experiences,
       })
     }
     successVisible.value = true
@@ -291,6 +312,7 @@ function resetForm() {
   form.work_unit = ''
   form.position = ''
   form.professional_years = undefined
+  form.source = ''
   projects.value = [{ name: '', start_date: '', end_date: '', role: '', description: '' }]
 }
 </script>

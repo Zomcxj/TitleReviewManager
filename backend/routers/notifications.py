@@ -92,6 +92,40 @@ async def get_unread_count(
     return {"count": count}
 
 
+@router.delete("/clear-read")
+async def clear_read_notifications(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """清理本人所有已读通知（避免通知列表无限膨胀）。注意：必须声明在 /{notification_id} 之前，否则会被动态路由遮蔽。"""
+    user_id = current_user.get("id")
+    deleted = db.query(Notification).filter(
+        Notification.user_id == user_id,
+        Notification.is_read == True,
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"message": f"已清理 {deleted} 条已读通知", "deleted": deleted}
+
+
+@router.delete("/{notification_id}")
+async def delete_notification(
+    notification_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """删除单条通知（仅本人的通知）"""
+    user_id = current_user.get("id")
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == user_id,
+    ).first()
+    if not notification:
+        raise HTTPException(status_code=404, detail="通知不存在")
+    db.delete(notification)
+    db.commit()
+    return {"message": "已删除"}
+
+
 def create_notification(
     db: Session,
     user_id: int,

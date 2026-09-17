@@ -51,6 +51,7 @@ class CustomerCreate(BaseModel):
     professional_years: Optional[int] = None
     project_experiences: Optional[str] = None
     assigned_salesman_id: Optional[int] = None
+    source: Optional[str] = Field(None, max_length=50)
 
 
 class CustomerUpdate(BaseModel):
@@ -83,6 +84,7 @@ class CustomerResponse(BaseModel):
     project_experiences: Optional[str]
     assigned_salesman_id: Optional[int]
     name_pinyin: Optional[str] = None
+    source: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -115,8 +117,54 @@ class ApplicationResponse(BaseModel):
     submitted_at: Optional[datetime]
     institution_name: Optional[str]
     assigned_reviewer_id: Optional[int]
+    cycle_year: Optional[int] = None
+    cycle_deadline: Optional[datetime] = None
+    contract_no: Optional[str] = None
+    contract_signed_at: Optional[datetime] = None
+    fee_amount: Optional[float] = None
+    paid_amount: Optional[float] = None
+    payment_status: str = "未收费"
+    payment_remark: Optional[str] = None
+    certificate_status: str = "未发证"
+    certificate_no: Optional[str] = None
+    certificate_issued_at: Optional[datetime] = None
+    certificate_delivered_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ApplicationFinanceUpdate(BaseModel):
+    """收费/合同/证书信息更新（独立于状态流转）"""
+    contract_no: Optional[str] = Field(None, max_length=64)
+    contract_signed_at: Optional[datetime] = None
+    fee_amount: Optional[float] = Field(None, ge=0)
+    payment_status: Optional[str] = Field(None, max_length=20)
+    payment_remark: Optional[str] = None
+    certificate_status: Optional[str] = Field(None, max_length=20)
+    certificate_no: Optional[str] = Field(None, max_length=64)
+    certificate_issued_at: Optional[datetime] = None
+    certificate_delivered_at: Optional[datetime] = None
+
+
+class PaymentRecordCreate(BaseModel):
+    amount: float = Field(..., gt=0)
+    paid_at: Optional[datetime] = None
+    method: Optional[str] = Field(None, max_length=30)
+    remark: Optional[str] = None
+
+
+class PaymentRecordResponse(BaseModel):
+    id: int
+    application_id: int
+    amount: float
+    paid_at: datetime
+    method: Optional[str]
+    remark: Optional[str]
+    created_by_id: Optional[int]
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -204,6 +252,7 @@ class SelfRegisterRequest(BaseModel):
     position: Optional[str] = None
     professional_years: Optional[int] = None
     project_experiences: Optional[str] = None
+    source: Optional[str] = Field(None, max_length=50, description="客户来源渠道")
 
 
 class OperationLogResponse(BaseModel):

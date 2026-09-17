@@ -11,6 +11,7 @@ from models import Customer, User, Notification
 from sqlalchemy import func, or_
 from datetime import datetime, timezone, timedelta
 from routers.notifications import create_notification
+from utils.system_config import get_config
 import logging
 
 logging.basicConfig(
@@ -28,11 +29,14 @@ def check_and_recovery_customers():
     """检查并回收超时未跟进的客户"""
     db = next(get_db())
     try:
-        threshold = datetime.utcnow() - timedelta(days=POOL_RECOVERY_DAYS)
+        # 回收天数运行时读系统配置，模块级常量仅作兜底默认值
+        recovery_days = get_config(db, "pool_recovery_days") or POOL_RECOVERY_DAYS
+        threshold = datetime.utcnow() - timedelta(days=recovery_days)
         
         # 用 coalesce 以创建时间兜底，避免新建客户（从未跟进）被立刻误回收
         overdue_customers = db.query(Customer).filter(
-            Customer.is_public == False,
+            Customer.is_public == False,  # noqa: E712
+            Customer.is_deleted == False,  # noqa: E712
             Customer.assigned_salesman_id.isnot(None),
             func.coalesce(Customer.last_follow_up_at, Customer.created_at) < threshold
         ).all()
@@ -49,7 +53,7 @@ def check_and_recovery_customers():
                     db=db,
                     user_id=salesman_id,
                     title="客户自动回收",
-                    content=f"客户 {customer.name} 因超过{POOL_RECOVERY_DAYS}天未跟进，已自动回收到公海池",
+                    content=f"客户 {customer.name} 因超过{recovery_days}天未跟进，已自动回收到公海池",
                     type="pool_recovery",
                     related_type="customer",
                     related_id=customer.id,
@@ -75,7 +79,8 @@ def check_sla_deadlines():
         
         expired = db.query(Customer).filter(
             Customer.sla_deadline < now,
-            Customer.is_public == False,
+            Customer.is_public == False,  # noqa: E712
+            Customer.is_deleted == False,  # noqa: E712
             Customer.assigned_salesman_id.isnot(None)
         ).all()
         
@@ -115,7 +120,8 @@ def send_expiring_reminders():
         
         expiring = db.query(Customer).filter(
             Customer.sla_deadline.between(now, twelve_hours_later),
-            Customer.is_public == False,
+            Customer.is_public == False,  # noqa: E712
+            Customer.is_deleted == False,  # noqa: E712
             Customer.assigned_salesman_id.isnot(None)
         ).all()
         

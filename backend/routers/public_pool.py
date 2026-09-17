@@ -7,6 +7,7 @@ from schemas import CustomerResponse
 from auth import get_current_user
 from datetime import datetime, timezone, timedelta
 from routers.notifications import create_notification
+from utils.system_config import get_config
 
 router = APIRouter(prefix="/api/public-pool", tags=["公海池"])
 
@@ -23,7 +24,10 @@ async def list_public_customers(
     user_id = current_user.get("id")
     user_role = current_user.get("role")
     
-    query = db.query(Customer).filter(Customer.is_public == True)
+    query = db.query(Customer).filter(
+        Customer.is_public == True,  # noqa: E712
+        Customer.is_deleted == False,  # noqa: E712
+    )
     
     if keyword:
         query = query.filter(
@@ -45,7 +49,8 @@ async def list_public_customers(
     results = []
     for c in customers:
         last_app = db.query(Application).filter(
-            Application.customer_id == c.id
+            Application.customer_id == c.id,
+            Application.is_deleted == False,  # noqa: E712
         ).order_by(desc(Application.id)).first()
         
         results.append({
@@ -70,7 +75,10 @@ async def claim_customer(
     if user_role not in ["salesman", "admin"]:
         raise HTTPException(status_code=403, detail="只有业务员可以领取客户")
     
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    customer = db.query(Customer).filter(
+        Customer.id == customer_id,
+        Customer.is_deleted == False,  # noqa: E712
+    ).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
     
@@ -79,18 +87,23 @@ async def claim_customer(
     
     current_salesman_count = db.query(Customer).filter(
         Customer.assigned_salesman_id == user_id,
-        Customer.is_public == False
+        Customer.is_public == False,  # noqa: E712
+        Customer.is_deleted == False,  # noqa: E712
     ).count()
     
-    if current_salesman_count >= 50:
-        raise HTTPException(status_code=400, detail="每人最多持有 50 个客户")
+    # 持有上限由系统配置 pool_claim_limit 驱动（默认 50）
+    claim_limit = get_config(db, "pool_claim_limit")
+    if current_salesman_count >= claim_limit:
+        raise HTTPException(status_code=400, detail=f"每人最多持有 {claim_limit} 个客户")
     
     old_salesman_id = customer.assigned_salesman_id
     customer.assigned_salesman_id = user_id
     customer.is_public = False
     customer.public_at = None
     customer.last_follow_up_at = datetime.utcnow()
-    customer.sla_deadline = datetime.utcnow() + timedelta(hours=24)
+    # 分配后 SLA 时长由系统配置 sla_hours_after_assign 驱动（默认 24 小时）
+    sla_hours = get_config(db, "sla_hours_after_assign")
+    customer.sla_deadline = datetime.utcnow() + timedelta(hours=sla_hours)
     
     db.commit()
     
@@ -117,7 +130,10 @@ async def release_customer(
 ):
     user_id = current_user.get("id")
     
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    customer = db.query(Customer).filter(
+        Customer.id == customer_id,
+        Customer.is_deleted == False,  # noqa: E712
+    ).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
     
@@ -138,16 +154,21 @@ async def get_pool_stats(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    total_in_pool = db.query(Customer).filter(Customer.is_public == True).count()
+    total_in_pool = db.query(Customer).filter(
+        Customer.is_public == True,  # noqa: E712
+        Customer.is_deleted == False,  # noqa: E712
+    ).count()
     
     today_claims = db.query(Customer).filter(
-        Customer.is_public == False,
+        Customer.is_public == False,  # noqa: E712
+        Customer.is_deleted == False,  # noqa: E712
         Customer.public_at >= datetime.utcnow() - timedelta(days=1)
     ).count()
     
     overdue = db.query(Customer).filter(
         Customer.sla_deadline < datetime.utcnow(),
-        Customer.is_public == False,
+        Customer.is_public == False,  # noqa: E712
+        Customer.is_deleted == False,  # noqa: E712
         Customer.assigned_salesman_id.isnot(None)
     ).count()
     
@@ -156,7 +177,8 @@ async def get_pool_stats(
             datetime.utcnow(),
             datetime.utcnow() + timedelta(hours=12)
         ),
-        Customer.is_public == False,
+        Customer.is_public == False,  # noqa: E712
+        Customer.is_deleted == False,  # noqa: E712
         Customer.assigned_salesman_id.isnot(None)
     ).count()
     

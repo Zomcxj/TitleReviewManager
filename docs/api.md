@@ -28,8 +28,11 @@
 |------|------|------|
 | `/api/applications/` | GET/POST | 申请列表/创建 |
 | `/api/applications/{id}` | GET/PUT | 申请详情/状态更新 |
-| `/api/applications/{id}/submit-to-institution` | POST | 提交评审机构 |
-| `/api/applications/{id}/reapply` | POST | 发起二次申报 |
+| `/api/applications/{id}/submit-to-institution` | POST | 提交评审机构（**校验必传材料齐全**，缺料 400） |
+| `/api/applications/{id}/material-checklist` | GET | 材料完备性清单（必传/已传/缺失） |
+| `/api/applications/{id}/cycle` | PUT | 设置申报年度与截止时间 |
+| `/api/applications/{id}/revert-status` | POST | 状态回退纠错（仅管理员，需填原因） |
+| `/api/applications/{id}/reapply` | POST | 发起二次申报（**检测重复申报**：同客户+同专业+同级别已有进行中批次时 400） |
 | `/api/applications/{id}/materials/` | GET | 材料列表（含关键词/类型/状态筛选 + NAS 树） |
 | `/api/applications/{id}/materials/` | POST | 上传材料 |
 | `/api/applications/{id}/materials/{mid}` | DELETE | 删除材料 |
@@ -89,6 +92,8 @@
 | `/api/notifications/unread-count` | GET | 未读数量 |
 | `/api/notifications/read/{id}` | POST | 标记已读 |
 | `/api/notifications/read-all` | POST | 全部已读 |
+| `/api/notifications/{id}` | DELETE | 删除单条通知 |
+| `/api/notifications/clear-read` | DELETE | 清理本人已读通知 |
 | `/api/follow-ups/customer/{id}` | GET | 跟进记录 |
 | `/api/follow-ups/` | POST | 添加跟进（salesman/admin；更新客户最后跟进时间） |
 | `/api/follow-ups/{id}` | DELETE | 删除跟进（创建者或管理员） |
@@ -123,3 +128,45 @@
 | `/api/health` | GET | 健康检查 |
 | `/api/registration/links` | POST/GET | 注册链接管理 |
 | `/api/auth/lock-status` | GET | 账号锁定状态 |
+
+## 客户进度自助查询（公开，无需登录）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/public-progress/query` | POST | 凭身份证号 + 手机号后 4 位查进度（IP 限流 20 次/5 分钟） |
+| `/api/public-progress/status` | GET | 服务可用性探针 |
+
+> 返回内容仅含批次号、专业、级别、状态、进度时间线、材料统计、最近机构反馈，**不含**身份证号/手机号/工作单位等敏感字段。
+
+## 收费/合同/回款与证书
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/finance/application/{id}` | GET | 查询批次财务与证书信息（含回款明细） |
+| `/api/finance/application/{id}` | PUT | 更新合同/收费/证书信息（salesman 限名下） |
+| `/api/finance/application/{id}/payments` | POST | 登记回款（自动汇总已收金额与收费状态） |
+| `/api/finance/payments/{id}` | DELETE | 删除回款记录（管理员） |
+| `/api/finance/summary` | GET | 财务总览（管理员） |
+| `/api/finance/pending` | GET | 待收款提醒（按欠款额倒序） |
+
+## 系统配置（管理员）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/system-config/` | GET | 读取全部配置项（含标签与默认值） |
+| `/api/system-config/` | PUT | 批量更新配置（保存后立即生效） |
+| `/api/system-config/reset` | POST | 恢复默认值 |
+
+## 回收站（管理员）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/recycle-bin/` | GET | 已软删除记录（可按 `resource_type` 过滤） |
+| `/api/recycle-bin/restore` | POST | 恢复记录 |
+| `/api/recycle-bin/purge/{type}/{id}` | DELETE | 彻底删除（带依赖校验） |
+
+## 客户删除
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/customers/{id}` | DELETE | 软删除客户（存在评审中批次时 400，可在回收站恢复） |

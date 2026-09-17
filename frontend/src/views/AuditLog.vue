@@ -39,6 +39,9 @@
           @change="handleSearch"
         />
         <el-button type="primary" @click="handleSearch">查询</el-button>
+        <el-button type="success" :loading="exporting" @click="handleExport">
+          <el-icon><Download /></el-icon> 导出 Excel
+        </el-button>
       </div>
     </div>
 
@@ -113,6 +116,7 @@ interface Log {
 }
 
 const loading = ref(false)
+const exporting = ref(false)
 const logs = ref<Log[]>([])
 const filters = reactive({
   username: '',
@@ -155,6 +159,68 @@ async function fetchLogs() {
 function handleSearch() {
   pagination.page = 1
   fetchLogs()
+}
+
+function buildFilterParams(): Record<string, any> {
+  const params: Record<string, any> = {}
+  if (filters.username) params.username = filters.username
+  if (filters.action) params.action = filters.action
+  if (filters.resource_type) params.resource_type = filters.resource_type
+  if (dateRange.value) {
+    params.start_date = dateRange.value[0].toISOString()
+    params.end_date = dateRange.value[1].toISOString()
+  }
+  return params
+}
+
+function parseFilename(disposition: string | undefined): string {
+  if (!disposition) return ''
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+  const match = /filename="?([^";]+)"?/i.exec(disposition)
+  return match ? match[1] : ''
+}
+
+async function handleExport() {
+  exporting.value = true
+  try {
+    const response = await api.get('/api/audit/export', {
+      params: buildFilterParams(),
+      responseType: 'blob',
+    })
+    const disposition = response.headers?.['content-disposition'] as string | undefined
+    const filename = parseFilename(disposition) || `操作审计日志_${new Date().getTime()}.xlsx`
+    const url = window.URL.createObjectURL(new Blob([response.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+  } catch (e: any) {
+    // blob 响应下错误体也是 blob，需要异步解析出 detail
+    let detail = ''
+    const blob = e.response?.data
+    if (blob instanceof Blob) {
+      try {
+        detail = JSON.parse(await blob.text())?.detail || ''
+      } catch {
+        detail = ''
+      }
+    } else {
+      detail = e.response?.data?.detail || ''
+    }
+    ElMessage.error(detail || '导出失败')
+  } finally {
+    exporting.value = false
+  }
 }
 
 function getActionType(action: string): 'success' | 'warning' | 'danger' | 'info' {

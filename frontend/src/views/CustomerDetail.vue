@@ -120,6 +120,83 @@
           <el-tab-pane label="跟进记录" name="followups">
             <FollowUpTimeline :customer-id="customer?.id || 0" />
           </el-tab-pane>
+
+          <el-tab-pane label="收费与证书" name="finance" v-if="currentAppId">
+            <div class="finance-tab" v-loading="financeLoading">
+              <div class="finance-section">
+                <div class="finance-section-header">
+                  <h4 class="section-title">收费信息</h4>
+                  <el-button v-if="canEditFinance" type="primary" size="small" @click="openFinanceEdit">
+                    编辑收费信息
+                  </el-button>
+                </div>
+                <el-descriptions :column="2" border size="small">
+                  <el-descriptions-item label="合同号">{{ finance.contract_no || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="合同签订日期">{{ formatDate(finance.contract_signed_at) }}</el-descriptions-item>
+                  <el-descriptions-item label="合同金额">
+                    {{ finance.fee_amount != null ? '¥ ' + formatMoney(finance.fee_amount) : '-' }}
+                  </el-descriptions-item>
+                  <el-descriptions-item label="已收金额">
+                    <span class="paid-amount">¥ {{ formatMoney(finance.paid_amount) }}</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="收费状态">
+                    <el-tag :type="paymentStatusType(finance.payment_status)" effect="plain" round size="small">
+                      {{ finance.payment_status || '-' }}
+                    </el-tag>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="收费备注">{{ finance.payment_remark || '-' }}</el-descriptions-item>
+                </el-descriptions>
+              </div>
+
+              <div class="finance-section">
+                <div class="finance-section-header">
+                  <h4 class="section-title">回款记录</h4>
+                  <el-button v-if="canEditFinance" type="primary" size="small" @click="openPaymentDialog">
+                    登记回款
+                  </el-button>
+                </div>
+                <el-table :data="finance.payment_records || []" size="small" border>
+                  <el-table-column label="金额" width="140">
+                    <template #default="{ row }">¥ {{ formatMoney(row.amount) }}</template>
+                  </el-table-column>
+                  <el-table-column label="回款日期" width="180">
+                    <template #default="{ row }">{{ formatDate(row.paid_at) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="method" label="方式" width="100">
+                    <template #default="{ row }">{{ row.method || '-' }}</template>
+                  </el-table-column>
+                  <el-table-column prop="remark" label="备注" min-width="160">
+                    <template #default="{ row }">{{ row.remark || '-' }}</template>
+                  </el-table-column>
+                  <el-table-column v-if="authStore.isAdmin" label="操作" width="90" align="center">
+                    <template #default="{ row }">
+                      <el-button type="danger" link size="small" @click="handleDeletePayment(row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <el-empty v-if="!(finance.payment_records || []).length" description="暂无回款记录" :image-size="60" />
+              </div>
+
+              <div class="finance-section">
+                <div class="finance-section-header">
+                  <h4 class="section-title">证书信息</h4>
+                  <el-button v-if="canEditFinance" type="primary" size="small" @click="openCertificateEdit">
+                    编辑证书信息
+                  </el-button>
+                </div>
+                <el-descriptions :column="2" border size="small">
+                  <el-descriptions-item label="证书状态">
+                    <el-tag :type="certificateStatusType(finance.certificate_status)" effect="plain" round size="small">
+                      {{ finance.certificate_status || '-' }}
+                    </el-tag>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="证书编号">{{ finance.certificate_no || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="发证日期">{{ formatDate(finance.certificate_issued_at) }}</el-descriptions-item>
+                  <el-descriptions-item label="交付日期">{{ formatDate(finance.certificate_delivered_at) }}</el-descriptions-item>
+                </el-descriptions>
+              </div>
+            </div>
+          </el-tab-pane>
         </el-tabs>
       </el-col>
 
@@ -135,6 +212,17 @@
             <div class="app-item-info">
               <span>{{ app.professional_category || '未指定专业' }} / {{ app.title_level || '未指定级别' }}</span>
               <span class="app-materials">{{ app.materials_count || 0 }} 份材料</span>
+            </div>
+            <div v-if="app.cycle_year || app.cycle_deadline" class="app-item-cycle">
+              <el-tag v-if="app.cycle_year" size="small" effect="plain" type="info">{{ app.cycle_year }}年度</el-tag>
+              <el-tag v-if="app.cycle_deadline" size="small" effect="plain" type="warning">
+                截止 {{ formatMonthDay(app.cycle_deadline) }}
+              </el-tag>
+            </div>
+            <div v-if="canEditCycle" class="app-item-actions">
+              <el-button type="primary" text size="small" @click.stop="openCycleDialog(app)">
+                <el-icon><Calendar /></el-icon> 设置申报周期
+              </el-button>
             </div>
           </div>
           <el-empty v-if="!applications.length" description="暂无申报批次" :image-size="60" />
@@ -173,6 +261,121 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="showFinanceEditDialog" title="编辑收费信息" width="560px">
+      <el-form :model="financeEditForm" label-position="top">
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="合同号">
+              <el-input v-model="financeEditForm.contract_no" placeholder="请输入合同号" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="合同签订日期">
+              <el-date-picker v-model="financeEditForm.contract_signed_at" type="date" placeholder="选择日期"
+                value-format="YYYY-MM-DDTHH:mm:ss" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="合同金额">
+              <el-input-number v-model="financeEditForm.fee_amount" :min="0" :precision="2" :step="100"
+                style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="收费状态">
+              <el-select v-model="financeEditForm.payment_status" style="width: 100%">
+                <el-option v-for="s in PAYMENT_STATUSES" :key="s" :label="s" :value="s" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-form-item label="收费备注">
+          <el-input v-model="financeEditForm.payment_remark" type="textarea" :rows="2" placeholder="选填" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showFinanceEditDialog = false">取消</el-button>
+        <el-button type="primary" :loading="financeSubmitting" @click="handleSaveFinance">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showCertificateEditDialog" title="编辑证书信息" width="480px">
+      <el-form :model="certificateEditForm" label-position="top">
+        <el-form-item label="证书状态">
+          <el-select v-model="certificateEditForm.certificate_status" style="width: 100%">
+            <el-option v-for="s in CERTIFICATE_STATUSES" :key="s" :label="s" :value="s" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="证书编号">
+          <el-input v-model="certificateEditForm.certificate_no" placeholder="请输入证书编号" />
+        </el-form-item>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="发证日期">
+              <el-date-picker v-model="certificateEditForm.certificate_issued_at" type="date" placeholder="选择日期"
+                value-format="YYYY-MM-DDTHH:mm:ss" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="交付日期">
+              <el-date-picker v-model="certificateEditForm.certificate_delivered_at" type="date" placeholder="选择日期"
+                value-format="YYYY-MM-DDTHH:mm:ss" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCertificateEditDialog = false">取消</el-button>
+        <el-button type="primary" :loading="financeSubmitting" @click="handleSaveCertificate">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showPaymentDialog" title="登记回款" width="460px">
+      <el-form :model="paymentForm" label-position="top">
+        <el-form-item label="回款金额" required>
+          <el-input-number v-model="paymentForm.amount" :min="0.01" :precision="2" :step="100" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="回款日期" required>
+          <el-date-picker v-model="paymentForm.paid_at" type="date" placeholder="选择日期"
+            value-format="YYYY-MM-DDTHH:mm:ss" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="回款方式">
+          <el-select v-model="paymentForm.method" placeholder="请选择回款方式" style="width: 100%">
+            <el-option label="现金" value="现金" />
+            <el-option label="转账" value="转账" />
+            <el-option label="微信" value="微信" />
+            <el-option label="支付宝" value="支付宝" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="paymentForm.remark" type="textarea" :rows="3" placeholder="选填" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showPaymentDialog = false">取消</el-button>
+        <el-button type="primary" :loading="financeSubmitting" @click="handleSubmitPayment">确认登记</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showCycleDialog" title="设置申报周期" width="420px">
+      <el-form label-position="top">
+        <el-form-item label="申报年度">
+          <el-input-number v-model="cycleForm.cycle_year" :min="2000" :max="2100" :controls="false"
+            placeholder="如 2026" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="申报截止时间">
+          <el-date-picker v-model="cycleForm.cycle_deadline" type="datetime" placeholder="选择截止时间"
+            value-format="YYYY-MM-DDTHH:mm:ss" style="width: 100%" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCycleDialog = false">取消</el-button>
+        <el-button type="primary" :loading="cycleSubmitting" @click="handleSaveCycle">保存</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="showTransferDialog" title="转让客户" width="400px">
       <el-form label-position="top">
         <el-form-item label="转让给">
@@ -190,7 +393,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, reactive } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../api'
@@ -212,6 +415,13 @@ const currentAppId = ref<number | null>(null)
 const showSubmitDialog = ref(false)
 const showFeedbackDialog = ref(false)
 const showTransferDialog = ref(false)
+const showCycleDialog = ref(false)
+const cycleSubmitting = ref(false)
+const cycleForm = reactive({
+  application_id: null as number | null,
+  cycle_year: undefined as number | undefined,
+  cycle_deadline: '',
+})
 const institutionName = ref('')
 const feedbackType = ref('通过')
 const feedbackContent = ref('')
@@ -219,6 +429,206 @@ const inlineTargetTitle = ref('')
 const salesmenList = ref<any[]>([])
 const transferTargetId = ref<number | null>(null)
 const transferLoading = ref(false)
+
+// ---------- 收费与证书 ----------
+const PAYMENT_STATUSES = ['未收费', '部分收费', '已结清', '已退款']
+const CERTIFICATE_STATUSES = ['未发证', '已发证', '已交付']
+
+const finance = ref<any>({
+  contract_no: null,
+  contract_signed_at: null,
+  fee_amount: null,
+  paid_amount: 0,
+  payment_status: null,
+  payment_remark: null,
+  certificate_status: null,
+  certificate_no: null,
+  certificate_issued_at: null,
+  certificate_delivered_at: null,
+  payment_records: [],
+})
+const financeLoading = ref(false)
+const financeSubmitting = ref(false)
+const showFinanceEditDialog = ref(false)
+const showCertificateEditDialog = ref(false)
+const showPaymentDialog = ref(false)
+
+const financeEditForm = reactive({
+  contract_no: '',
+  contract_signed_at: '',
+  fee_amount: undefined as number | undefined,
+  payment_status: '未收费',
+  payment_remark: '',
+})
+
+const certificateEditForm = reactive({
+  certificate_status: '未发证',
+  certificate_no: '',
+  certificate_issued_at: '',
+  certificate_delivered_at: '',
+})
+
+const paymentForm = reactive({
+  amount: 0,
+  paid_at: '',
+  method: '转账',
+  remark: '',
+})
+
+const canEditFinance = computed(() => authStore.isAdmin || authStore.isSalesman)
+
+function formatMoney(value: number | null | undefined) {
+  const num = Number(value ?? 0)
+  return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function paymentStatusType(status: string | null) {
+  const map: Record<string, string> = {
+    '未收费': 'info',
+    '部分收费': 'warning',
+    '已结清': 'success',
+    '已退款': 'danger',
+  }
+  return map[status || ''] || 'info'
+}
+
+function certificateStatusType(status: string | null) {
+  const map: Record<string, string> = {
+    '未发证': 'info',
+    '已发证': 'warning',
+    '已交付': 'success',
+  }
+  return map[status || ''] || 'info'
+}
+
+function todayString() {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T00:00:00`
+}
+
+async function loadFinance(appId: number) {
+  financeLoading.value = true
+  try {
+    const { data } = await api.get(`/api/finance/application/${appId}`)
+    finance.value = data
+  } catch (e: any) {
+    if (e.response?.status !== 403) {
+      ElMessage.error(e.response?.data?.detail || '加载收费信息失败')
+    }
+  } finally {
+    financeLoading.value = false
+  }
+}
+
+function openFinanceEdit() {
+  financeEditForm.contract_no = finance.value.contract_no || ''
+  financeEditForm.contract_signed_at = finance.value.contract_signed_at || ''
+  financeEditForm.fee_amount = finance.value.fee_amount ?? undefined
+  financeEditForm.payment_status = finance.value.payment_status || '未收费'
+  financeEditForm.payment_remark = finance.value.payment_remark || ''
+  showFinanceEditDialog.value = true
+}
+
+function openCertificateEdit() {
+  certificateEditForm.certificate_status = finance.value.certificate_status || '未发证'
+  certificateEditForm.certificate_no = finance.value.certificate_no || ''
+  certificateEditForm.certificate_issued_at = finance.value.certificate_issued_at || ''
+  certificateEditForm.certificate_delivered_at = finance.value.certificate_delivered_at || ''
+  showCertificateEditDialog.value = true
+}
+
+function openPaymentDialog() {
+  paymentForm.amount = 0
+  paymentForm.paid_at = todayString()
+  paymentForm.method = '转账'
+  paymentForm.remark = ''
+  showPaymentDialog.value = true
+}
+
+async function handleSaveFinance() {
+  if (!currentAppId.value) return
+  financeSubmitting.value = true
+  try {
+    const { data } = await api.put(`/api/finance/application/${currentAppId.value}`, {
+      contract_no: financeEditForm.contract_no || null,
+      contract_signed_at: financeEditForm.contract_signed_at || null,
+      fee_amount: financeEditForm.fee_amount ?? null,
+      payment_status: financeEditForm.payment_status || null,
+      payment_remark: financeEditForm.payment_remark || null,
+    })
+    finance.value = data
+    ElMessage.success('收费信息已保存')
+    showFinanceEditDialog.value = false
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  } finally {
+    financeSubmitting.value = false
+  }
+}
+
+async function handleSaveCertificate() {
+  if (!currentAppId.value) return
+  financeSubmitting.value = true
+  try {
+    const { data } = await api.put(`/api/finance/application/${currentAppId.value}`, {
+      certificate_status: certificateEditForm.certificate_status || null,
+      certificate_no: certificateEditForm.certificate_no || null,
+      certificate_issued_at: certificateEditForm.certificate_issued_at || null,
+      certificate_delivered_at: certificateEditForm.certificate_delivered_at || null,
+    })
+    finance.value = data
+    ElMessage.success('证书信息已保存')
+    showCertificateEditDialog.value = false
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  } finally {
+    financeSubmitting.value = false
+  }
+}
+
+async function handleSubmitPayment() {
+  if (!currentAppId.value) return
+  if (!paymentForm.amount || paymentForm.amount <= 0) {
+    ElMessage.warning('回款金额必须大于 0')
+    return
+  }
+  financeSubmitting.value = true
+  try {
+    const { data } = await api.post(`/api/finance/application/${currentAppId.value}/payments`, {
+      amount: paymentForm.amount,
+      paid_at: paymentForm.paid_at || null,
+      method: paymentForm.method || null,
+      remark: paymentForm.remark || null,
+    })
+    finance.value = data
+    ElMessage.success('回款已登记')
+    showPaymentDialog.value = false
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '登记回款失败')
+  } finally {
+    financeSubmitting.value = false
+  }
+}
+
+async function handleDeletePayment(record: any) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除该笔回款记录（¥ ${formatMoney(record.amount)}）？删除后将重新汇总已收金额。`,
+      '删除回款记录',
+      { type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await api.delete(`/api/finance/payments/${record.id}`)
+    ElMessage.success('回款记录已删除')
+    if (currentAppId.value) await loadFinance(currentAppId.value)
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
+}
 
 const currentApp = computed(() => applications.value.find(a => a.id === currentAppId.value) || null)
 
@@ -228,6 +638,9 @@ const projectExperiences = computed(() => {
 })
 
 const isSalesman = computed(() => authStore.isSalesman || authStore.isAdmin)
+
+// 申报周期设置：仅管理员/业务员
+const canEditCycle = computed(() => authStore.isAdmin || authStore.isSalesman)
 
 function canOperate() {
   return authStore.isSalesman || authStore.isAdmin
@@ -275,6 +688,7 @@ watch(() => route.params.id, () => loadData(), { immediate: true })
 watch(activeTab, (tab) => {
   if (tab === 'reviews' && currentAppId.value) loadReviews(currentAppId.value)
   if (tab === 'logs' && currentAppId.value) loadLogs(currentAppId.value)
+  if (tab === 'finance' && currentAppId.value) loadFinance(currentAppId.value)
 })
 // 每 10 秒自动刷新状态（审核员通过后按钮自动变为"提交评审机构"）
 let statusPollTimer: ReturnType<typeof setInterval> | null = null
@@ -319,6 +733,7 @@ function selectApp(app: any) {
   reviews.value = []
   logs.value = []
   loadMaterials(app.id)
+  if (activeTab.value === 'finance') loadFinance(app.id)
 }
 
 async function loadMaterials(appId: number) {
@@ -340,8 +755,29 @@ async function loadLogs(appId: number) {
   logs.value = data
 }
 
+/** 提交前材料清单校验：缺料时弹窗提示并返回 false（中止提交） */
+async function ensureMaterialsComplete(appId: number): Promise<boolean> {
+  try {
+    const { data } = await api.get(`/api/applications/${appId}/material-checklist`)
+    if (!data.is_complete) {
+      const missing = (data.missing || []).join('、')
+      ElMessageBox.alert(
+        `缺少必传材料：${missing}，请补齐后再提交`,
+        '材料不齐全',
+        { type: 'warning', confirmButtonText: '我知道了' }
+      ).catch(() => {})
+      return false
+    }
+    return true
+  } catch {
+    // 清单接口异常时放行，由后端兜底校验
+    return true
+  }
+}
+
 async function handleReadyForReview() {
   if (!currentAppId.value) return
+  if (!(await ensureMaterialsComplete(currentAppId.value))) return
   try {
     await api.put(`/api/applications/${currentAppId.value}`, { status: '完成资料' })
     ElMessage.success('已提交内部审核，状态变更为完成资料')
@@ -365,6 +801,9 @@ async function handleReapply(appId: number) {
 }
 
 async function handleSubmitToInstitution() {
+  if (!currentApp.value) return
+  // 提交前先校验材料清单：缺料直接中止，避免后端 400
+  if (!(await ensureMaterialsComplete(currentApp.value.id))) return
   try {
     await api.post(`/api/applications/${currentApp.value.id}/submit-to-institution`, {
       institution_name: institutionName.value,
@@ -374,6 +813,39 @@ async function handleSubmitToInstitution() {
     loadData()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '提交失败')
+  }
+}
+
+function formatMonthDay(d: string) {
+  if (!d) return '-'
+  const date = new Date(d)
+  if (Number.isNaN(date.getTime())) return '-'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function openCycleDialog(app: any) {
+  cycleForm.application_id = app.id
+  cycleForm.cycle_year = app.cycle_year ?? undefined
+  cycleForm.cycle_deadline = app.cycle_deadline ? String(app.cycle_deadline).slice(0, 19) : ''
+  showCycleDialog.value = true
+}
+
+async function handleSaveCycle() {
+  if (!cycleForm.application_id) return
+  cycleSubmitting.value = true
+  try {
+    await api.put(`/api/applications/${cycleForm.application_id}/cycle`, {
+      cycle_year: cycleForm.cycle_year ?? null,
+      cycle_deadline: cycleForm.cycle_deadline || null,
+    })
+    ElMessage.success('申报周期已保存')
+    showCycleDialog.value = false
+    await loadData()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  } finally {
+    cycleSubmitting.value = false
   }
 }
 
@@ -542,6 +1014,16 @@ watch(() => showTransferDialog.value, (val) => {
   color: #6366f1;
   font-weight: 500;
 }
+.app-item-cycle {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.app-item-actions {
+  margin-top: 4px;
+  text-align: right;
+}
 .review-card, .log-card {
   border: none;
   background: #f8fafc;
@@ -593,5 +1075,24 @@ watch(() => showTransferDialog.value, (val) => {
   color: #1e293b;
   font-weight: 500;
   background: #f8fafc;
+}
+.finance-tab {
+  padding: 8px 0 16px;
+}
+.finance-section {
+  margin-bottom: 24px;
+}
+.finance-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.finance-section-header .section-title {
+  margin: 0;
+}
+.paid-amount {
+  color: #16a34a;
+  font-weight: 600;
 }
 </style>

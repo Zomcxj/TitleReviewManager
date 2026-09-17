@@ -4,6 +4,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/login' },
   { path: '/login', name: 'Login', component: () => import('../views/Login.vue') },
   { path: '/apply', name: 'CustomerForm', component: () => import('../views/CustomerForm.vue') },
+  { path: '/progress', name: 'ProgressQuery', component: () => import('../views/ProgressQuery.vue') },
   {
     path: '/admin',
     component: () => import('../components/AdminLayout.vue'),
@@ -20,6 +21,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'users', name: 'UserList', component: () => import('../views/UserList.vue'), meta: { roles: ['admin'] } },
       { path: 'import', name: 'CustomerImport', component: () => import('../views/CustomerImport.vue'), meta: { roles: ['admin', 'salesman'] } },
       { path: 'transfer', name: 'CustomerTransfer', component: () => import('../views/CustomerTransfer.vue'), meta: { roles: ['admin'] } },
+      { path: 'finance', name: 'Finance', component: () => import('../views/Finance.vue'), meta: { roles: ['admin', 'salesman'] } },
+      { path: 'system-config', name: 'SystemConfig', component: () => import('../views/SystemConfig.vue'), meta: { roles: ['admin'] } },
+      { path: 'recycle-bin', name: 'RecycleBin', component: () => import('../views/RecycleBin.vue'), meta: { roles: ['admin'] } },
     ],
   },
   { path: '/:pathMatch(.*)*', name: 'NotFound', component: () => import('../views/NotFound.vue') },

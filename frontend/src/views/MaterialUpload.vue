@@ -23,6 +23,39 @@
       </div>
     </div>
 
+    <!-- Material checklist hint -->
+    <div v-if="checklist" class="checklist-bar">
+      <el-alert
+        v-if="!checklist.is_complete"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="checklist-alert"
+      >
+        <template #title>
+          <div class="checklist-alert-title">
+            <span>还需补充材料：{{ (checklist.missing || []).join('、') }}</span>
+            <el-button type="warning" text size="small" @click="showChecklist = !showChecklist">
+              {{ showChecklist ? '收起清单' : '查看完整清单' }}
+            </el-button>
+          </div>
+        </template>
+        <el-collapse-transition>
+          <div v-show="showChecklist" class="checklist-detail">
+            <div v-for="item in checklist.required" :key="item.category" class="checklist-row">
+              <span class="checklist-cat">{{ item.category }}</span>
+              <el-tag :type="item.provided ? 'success' : 'danger'" size="small" round>
+                {{ item.provided ? `已传 ${item.count} 份` : '未传' }}
+              </el-tag>
+            </div>
+          </div>
+        </el-collapse-transition>
+      </el-alert>
+      <el-tag v-else type="success" effect="plain" round size="small" class="checklist-ok">
+        <el-icon><CircleCheck /></el-icon> 材料齐全
+      </el-tag>
+    </div>
+
       <!-- Left: material grid -->
       <div class="material-main">
         <div class="material-grid" v-if="groupedMaterials.length">
@@ -143,7 +176,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import api from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowUp, ArrowDown } from '@element-plus/icons-vue'
+import { ArrowUp, ArrowDown, CircleCheck } from '@element-plus/icons-vue'
 
 const props = defineProps<{ applicationId: number; canSubmit?: boolean }>()
 const emit = defineEmits(['submit-review'])
@@ -162,6 +195,8 @@ const previewMaterial = ref<any>(null)
 const rejectDetailVisible = ref(false)
 const rejectDetailItem = ref<any>(null)
 const rejectDetailData = ref<any>({})
+const checklist = ref<any>(null)
+const showChecklist = ref(false)
 
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 const PDF_EXTS = ['.pdf']
@@ -240,8 +275,19 @@ async function loadMaterials() {
     }
     const { data: reviewData } = await api.get(`/api/reviews/application/${props.applicationId}`)
     reviews.value = reviewData
+    // 材料清单完备性：上传/删除材料后随材料列表一并刷新
+    loadChecklist()
   } finally {
     loading.value = false
+  }
+}
+
+async function loadChecklist() {
+  try {
+    const { data } = await api.get(`/api/applications/${props.applicationId}/material-checklist`)
+    checklist.value = data
+  } catch {
+    checklist.value = null
   }
 }
 
@@ -348,6 +394,38 @@ watch(() => props.applicationId, loadMaterials, { immediate: true })
 }
 .upload-left :deep(.el-upload .el-button .el-icon) {
   margin-right: 4px;
+}
+.checklist-bar {
+  margin-bottom: 16px;
+}
+.checklist-alert {
+  border-radius: 10px;
+}
+.checklist-alert-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.checklist-detail {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.checklist-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.checklist-cat {
+  color: #475569;
+}
+.checklist-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .issues-panel {
   background: #fef2f2;

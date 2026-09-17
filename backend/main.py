@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
 from database import engine, Base
 from sqlalchemy import text
-from routers import auth, customers, applications, materials, reviews, feedback, registration, audit, exports, notifications, follow_ups, public_pool, batch, dashboard, users, imports, word_import
+from routers import auth, customers, applications, materials, reviews, feedback, registration, audit, exports, notifications, follow_ups, public_pool, batch, dashboard, users, imports, word_import, public_progress, finance, system_config, recycle_bin
 import os, logging
 from datetime import datetime, timezone
 
@@ -33,6 +33,10 @@ app.include_router(dashboard.router)
 app.include_router(users.router)
 app.include_router(imports.router)
 app.include_router(word_import.router)
+app.include_router(public_progress.router)
+app.include_router(finance.router)
+app.include_router(system_config.router)
+app.include_router(recycle_bin.router)
 
 # 注意：uploads 目录不再静态挂载 —— 审核附件、反馈附件必须走鉴权下载接口，
 # 避免客户敏感文件被匿名访问（原先 /uploads 是完全公开的）。
@@ -44,8 +48,15 @@ if os.path.exists(frontend_dir):
 
 @app.on_event("startup")
 def ensure_tables():
-    """建表兜底：Alembic 负责结构迁移，这里保证全新 SQLite 环境能直接启动（只补缺失表，不动已有结构）。"""
+    """建表兜底 + 轻量结构同步：保证已有库升级代码后直接可用（只加表/加列，不删改）。"""
     Base.metadata.create_all(bind=engine)
+    try:
+        from utils.schema_sync import sync_schema
+        summary = sync_schema(engine, Base)
+        if summary["created_tables"] or summary["added_columns"]:
+            logger.info(f"schema 同步完成: 新表 {summary['created_tables']}, 新列 {len(summary['added_columns'])} 个")
+    except Exception as e:
+        logger.error(f"schema 同步失败（不影响启动）: {e}", exc_info=True)
 
 
 @app.get("/api/health")

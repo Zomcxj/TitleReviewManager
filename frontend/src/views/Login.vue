@@ -75,6 +75,11 @@
           </el-button>
         </el-form>
         
+        <div class="progress-entry">
+          <span class="progress-entry-text">想了解申报进展？</span>
+          <el-link type="primary" :underline="false" @click="router.push('/progress')">查询申报进度</el-link>
+        </div>
+
         <div class="demo-accounts">
           <div class="demo-header">
             <span class="demo-line"></span>
@@ -309,6 +314,21 @@ async function handleLogin() {
 
 .demo-accounts {
   margin-top: 32px;
+}
+
+.progress-entry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px dashed #e5e7eb;
+}
+
+.progress-entry-text {
+  font-size: 13px;
+  color: #94a3b8;
 }
 
 .demo-header {

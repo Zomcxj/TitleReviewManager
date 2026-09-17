@@ -15,12 +15,15 @@
       </div>
       <div class="toolbar-right">
         <span class="result-count">共 {{ total }} 条</span>
+        <el-button v-if="canBatchOperate" icon="Bell" :loading="batchLoading" @click="handleBatchRemind">批量催办</el-button>
+        <el-button v-if="canBatchOperate" icon="Promotion" :loading="batchLoading" @click="handleBatchSubmit">批量提交机构</el-button>
         <el-button v-if="authStore.isAdmin || authStore.isSalesman" type="success" icon="Download" @click="handleExport">导出 Excel</el-button>
       </div>
     </div>
 
     <el-table :data="customers" style="width: 100%; margin-top: 16px" v-loading="loading" row-key="id"
-      :row-class-name="getRowClass">
+      :row-class-name="getRowClass" ref="tableRef" @selection-change="handleSelectionChange">
+      <el-table-column v-if="canBatchOperate" type="selection" width="46" :selectable="isRowSelectable" />
       <el-table-column prop="name" label="姓名" min-width="120">
         <template #default="{ row }">
           <div class="name-cell">
@@ -70,7 +73,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 import { useAuthStore } from '../stores/auth'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -82,8 +85,21 @@ const statusFilter = ref((route.query.status as string) || '')
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const tableRef = ref()
+const selectedRows = ref<any[]>([])
+const batchLoading = ref(false)
 
 const showSalesman = computed(() => authStore.isAdmin || authStore.isReviewer)
+const canBatchOperate = computed(() => authStore.isAdmin || authStore.isSalesman)
+
+function handleSelectionChange(rows: any[]) {
+  selectedRows.value = rows
+}
+
+// 无申报批次的客户不可批量操作
+function isRowSelectable(row: any) {
+  return row.application_id != null
+}
 
 const statusOptions = ['初次申报', '资料补充', '完成资料', '提交评审机构审核', '返修', '通过', '不通过', '二次申报']
 
@@ -155,6 +171,93 @@ async function handleExport() {
   } catch (e: any) {
     console.error(e)
   }
+}
+
+function getSelectedApplicationIds(): number[] {
+  return selectedRows.value
+    .map((row: any) => row.application_id)
+    .filter((id: any) => id != null)
+}
+
+async function handleBatchRemind() {
+  if (!selectedRows.value.length) {
+    ElMessage.warning('请先选择客户')
+    return
+  }
+  const application_ids = getSelectedApplicationIds()
+  if (!application_ids.length) {
+    ElMessage.warning('所选客户暂无申报批次，无法催办')
+    return
+  }
+  batchLoading.value = true
+  try {
+    const { data } = await api.post('/api/batch/remind', { application_ids, message: '' })
+    ElMessage.success(`已催办 ${data.success ?? application_ids.length} 个批次`)
+    if (data.skipped?.length) {
+      showSkipped(data.skipped)
+    }
+    finishBatch()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '批量催办失败')
+  } finally {
+    batchLoading.value = false
+  }
+}
+
+async function handleBatchSubmit() {
+  if (!selectedRows.value.length) {
+    ElMessage.warning('请先选择客户')
+    return
+  }
+  const application_ids = getSelectedApplicationIds()
+  if (!application_ids.length) {
+    ElMessage.warning('所选客户暂无申报批次，无法提交')
+    return
+  }
+  let institutionName = ''
+  try {
+    const { value } = await ElMessageBox.prompt('请输入报送机构名称（可留空）', '批量提交评审机构', {
+      confirmButtonText: '确认提交',
+      cancelButtonText: '取消',
+      inputPlaceholder: '如：XX市人力资源和社会保障局',
+      inputValidator: () => true,
+    })
+    institutionName = value || ''
+  } catch {
+    return
+  }
+  batchLoading.value = true
+  try {
+    const { data } = await api.post('/api/batch/submit-to-institution', {
+      application_ids,
+      institution_name: institutionName,
+    })
+    ElMessage.success(`已提交 ${data.success ?? application_ids.length} 个批次`)
+    if (data.skipped?.length) {
+      showSkipped(data.skipped)
+    }
+    finishBatch()
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '批量提交失败')
+  } finally {
+    batchLoading.value = false
+  }
+}
+
+function showSkipped(skipped: any[]) {
+  const lines = skipped
+    .map((s: any) => `${s.batch_number || `#${s.application_id}`}：${s.reason || '跳过'}`)
+    .join('\n')
+  ElMessageBox.alert(lines, `以下 ${skipped.length} 个批次被跳过`, {
+    type: 'warning',
+    confirmButtonText: '我知道了',
+  }).catch(() => {})
+}
+
+function finishBatch() {
+  tableRef.value?.clearSelection()
+  selectedRows.value = []
+  loadData()
 }
 
 onMounted(() => {

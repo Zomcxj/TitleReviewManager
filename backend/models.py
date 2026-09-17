@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, ForeignKey, Enum, Float, Boolean, JSON
+    Column, Integer, String, Text, DateTime, ForeignKey, Enum, Float, Boolean, JSON, Numeric
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
@@ -8,15 +8,27 @@ from database import Base
 from enums import ApplicationStatus, AuditStatus
 
 
+class SystemConfig(Base):
+    """系统参数配置（键值对，管理员在线调整；未配置项回落到 enums.DEFAULT_SYSTEM_CONFIG）"""
+    __tablename__ = "system_configs"
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(64), unique=True, nullable=False, index=True)
+    value = Column(String(255), nullable=False)
+    description = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(String(50), nullable=True)
+
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
-    password = Column(String(128), nullable=True, comment="明文密码，仅管理员管理用")
     role = Column(String(20), nullable=False)
     real_name = Column(String(50))
     created_at = Column(DateTime, default=datetime.utcnow)
+    is_deleted = Column(Boolean, default=False, nullable=False, index=True, comment="软删除标记")
+    deleted_at = Column(DateTime, nullable=True)
 
 
 class Customer(Base):
@@ -39,6 +51,9 @@ class Customer(Base):
     last_follow_up_at = Column(DateTime, nullable=True, comment="最后跟进时间")
     public_at = Column(DateTime, nullable=True, comment="进入公海时间")
     sla_deadline = Column(DateTime, nullable=True, comment="SLA 截止时间")
+    source = Column(String(50), nullable=True, comment="客户来源渠道")
+    is_deleted = Column(Boolean, default=False, nullable=False, index=True, comment="软删除标记")
+    deleted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -58,6 +73,23 @@ class Application(Base):
     submitted_at = Column(DateTime)
     institution_name = Column(String(200))
     assigned_reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # 申报周期
+    cycle_year = Column(Integer, nullable=True, index=True, comment="申报年度")
+    cycle_deadline = Column(DateTime, nullable=True, comment="该批次申报截止时间")
+    # 收费/合同
+    contract_no = Column(String(64), nullable=True, index=True, comment="合同编号")
+    contract_signed_at = Column(DateTime, nullable=True, comment="合同签订时间")
+    fee_amount = Column(Numeric(12, 2), nullable=True, comment="合同金额")
+    paid_amount = Column(Numeric(12, 2), nullable=True, default=0, comment="已收金额")
+    payment_status = Column(String(20), nullable=False, default="未收费", index=True)
+    payment_remark = Column(Text, nullable=True, comment="收费备注/回款记录摘要")
+    # 证书结果
+    certificate_status = Column(String(20), nullable=False, default="未发证", index=True)
+    certificate_no = Column(String(64), nullable=True, comment="证书编号")
+    certificate_issued_at = Column(DateTime, nullable=True, comment="发证日期")
+    certificate_delivered_at = Column(DateTime, nullable=True, comment="证书交付客户时间")
+    is_deleted = Column(Boolean, default=False, nullable=False, index=True, comment="软删除标记")
+    deleted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -65,6 +97,7 @@ class Application(Base):
     materials = relationship("Material", back_populates="application")
     reviews = relationship("Review", back_populates="application")
     feedbacks = relationship("Feedback", back_populates="application")
+    payment_records = relationship("PaymentRecord", back_populates="application", order_by="PaymentRecord.id.desc()")
     assigned_reviewer = relationship("User", foreign_keys=[assigned_reviewer_id])
 
 
@@ -176,3 +209,19 @@ class FollowUp(Base):
 
     customer = relationship("Customer", back_populates="follow_ups")
     user = relationship("User", foreign_keys=[user_id])
+
+
+class PaymentRecord(Base):
+    """回款记录明细（一笔合同可分多次收款）"""
+    __tablename__ = "payment_records"
+    id = Column(Integer, primary_key=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    amount = Column(Numeric(12, 2), nullable=False)
+    paid_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    method = Column(String(30), nullable=True, comment="收款方式：现金/转账/微信/支付宝")
+    remark = Column(Text, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    application = relationship("Application", back_populates="payment_records")
+    created_by = relationship("User", foreign_keys=[created_by_id])

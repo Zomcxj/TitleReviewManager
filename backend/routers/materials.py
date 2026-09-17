@@ -8,6 +8,7 @@ from enums import MaterialCategory, AuditStatus
 from auth import get_current_user
 from enums import ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE
 from datetime import datetime
+from utils.system_config import get_config
 from storage import save_file, read_file, delete_file as storage_delete, list_files as storage_list, customer_dir, get_pinyin_initial
 import logging
 import os as _os
@@ -29,6 +30,15 @@ def check_customer_ownership(user: dict, customer: Customer):
     if user.get("role") == "salesman":
         if not customer or customer.assigned_salesman_id != (user.get("id") or user.get("user_id")):
             raise HTTPException(status_code=403, detail="无权操作该客户的材料")
+
+
+def _max_file_size(db: Session) -> tuple[int, int]:
+    """单文件大小上限，返回 (字节数, MB 数)。由系统配置 max_file_size_mb 驱动，enums.MAX_FILE_SIZE 作为兜底。"""
+    try:
+        mb = int(get_config(db, "max_file_size_mb"))
+    except (TypeError, ValueError):
+        mb = MAX_FILE_SIZE // 1024 // 1024
+    return mb * 1024 * 1024, mb
 
 
 def _get_customer_dir(customer: Customer) -> str:
@@ -104,15 +114,16 @@ async def upload_material(
     if ext not in ALLOWED_FILE_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"不支持的文件类型：{ext}")
 
+    max_bytes, max_mb = _max_file_size(db)
     if file.size is not None:
         # 优先使用请求声明的文件大小，超限时不再读取内容
-        if file.size > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
+        if file.size > max_bytes:
+            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{max_mb}MB")
         content = await file.read()
     else:
         content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
+        if len(content) > max_bytes:
+            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{max_mb}MB")
 
     rel = _get_customer_dir(customer)
     stored_path = save_file(rel, category, file.filename, content)
@@ -225,6 +236,18 @@ async def download_material_file(material_id: int, request: Request, db: Session
     content = read_file(material.file_path)
     if content is None:
         raise HTTPException(status_code=404, detail="文件不存在")
+    # PII 合规：材料下载留痕（下载成功后才记录）
+    detail = f"下载材料: {material.filename}, 客户: {customer.name if customer else ''}"
+    log = OperationLog(
+        user_id=user.get("user_id") or user.get("id"),
+        username=user.get("username", ""),
+        action="下载材料",
+        resource_type="material",
+        resource_id=material.id,
+        new_value={"detail": detail},
+    )
+    db.add(log)
+    db.commit()
     # RFC 5987: UTF-8 encoded filename for non-ASCII support
     filename_encoded = quote(material.filename.encode('utf-8'), safe='')
     # ASCII fallback for legacy clients

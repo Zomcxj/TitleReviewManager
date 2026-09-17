@@ -2,17 +2,19 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Body, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from database import get_db
-from models import Customer, Application, User, Material
+from models import Customer, Application, User, Material, OperationLog
 from schemas import (
     CustomerCreate, CustomerUpdate, CustomerResponse,
     ApplicationCreate, ApplicationResponse,
 )
 from auth import get_current_user, require_role
+from enums import CustomerSource
 from datetime import datetime, timezone, timedelta
 import asyncio
 import logging
 import uuid
 from utils.audit_logger import manual_audit_log
+from utils.system_config import get_config
 from storage import get_pinyin_initial, create_customer_directories, customer_dir, rename_customer_directory
 from routers.notifications import create_notification
 
@@ -30,6 +32,29 @@ def _require_roles(*roles: str):
     if asyncio.iscoroutine(dep):
         dep = asyncio.run(dep)
     return dep
+
+
+def _duplicate_phone_error(db: Session, phone: str, exclude_customer_id: int = None):
+    """手机号查重。
+
+    是否拦截由系统配置 reject_duplicate_phone 决定：默认为 0（不拦截），
+    因为一个手机号可能是家属共用。仅当配置为真时才返回错误提示文案。
+    """
+    if not phone:
+        return None
+    if not get_config(db, "reject_duplicate_phone"):
+        return None
+    q = db.query(Customer).filter(
+        Customer.phone == phone,
+        Customer.is_deleted == False,  # noqa: E712
+    )
+    if exclude_customer_id is not None:
+        q = q.filter(Customer.id != exclude_customer_id)
+    dup = q.first()
+    if not dup:
+        return None
+    tail = (dup.id_number or "")[-4:]
+    return f"该手机号已被客户 {dup.name}（身份证尾号 {tail}）使用"
 
 
 def _sync_customer_directory(db: Session, customer: Customer, old_name: str, old_pinyin: str, old_salesman_username: str = ""):
@@ -82,14 +107,18 @@ async def list_customers(
             Application.customer_id,
             func.max(Application.id).label("max_id")
         )
+        .filter(Application.is_deleted == False)  # noqa: E712
         .group_by(Application.customer_id)
         .subquery()
     )
     
     base_query = (
         db.query(Customer, Application)
-        .join(latest_app_subq, Customer.id == latest_app_subq.c.customer_id)
-        .join(Application, Application.id == latest_app_subq.c.max_id)
+        # 用 outer join：客户从回收站恢复后，名下批次可能仍在回收站，
+        # 此时客户本身应回到列表（状态显示为未知），而不是因 inner join 被隐藏
+        .outerjoin(latest_app_subq, Customer.id == latest_app_subq.c.customer_id)
+        .outerjoin(Application, Application.id == latest_app_subq.c.max_id)
+        .filter(Customer.is_deleted == False)  # noqa: E712
     )
     
     if user.get("role") == "salesman":
@@ -131,9 +160,17 @@ async def list_customers(
 async def get_stats(request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
     
-    base_query = db.query(Application)
+    # 统一 join Customer 并排除软删除客户，避免软删除客户名下批次仍被统计
+    base_query = (
+        db.query(Application)
+        .join(Customer, Customer.id == Application.customer_id)
+        .filter(
+            Application.is_deleted == False,  # noqa: E712
+            Customer.is_deleted == False,  # noqa: E712
+        )
+    )
     if user.get("role") == "salesman":
-        base_query = base_query.join(Customer).filter(Customer.assigned_salesman_id == user.get("id"))
+        base_query = base_query.filter(Customer.assigned_salesman_id == user.get("id"))
     elif user.get("role") == "reviewer":
         base_query = base_query.filter(Application.status.in_(["提交评审机构审核", "返修", "通过", "不通过"]))
 
@@ -167,13 +204,17 @@ async def list_salesmen(request: Request, db: Session = Depends(get_db)):
 @router.get("/{customer_id}", response_model=dict)
 async def get_customer(customer_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    customer = db.query(Customer).filter(
+        Customer.id == customer_id,
+        Customer.is_deleted == False,  # noqa: E712
+    ).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
     if user.get("role") == "salesman" and customer.assigned_salesman_id != user.get("id"):
         raise HTTPException(status_code=403, detail="只能查看自己名下的客户")
     applications = db.query(Application).filter(
-        Application.customer_id == customer_id
+        Application.customer_id == customer_id,
+        Application.is_deleted == False,  # noqa: E712
     ).order_by(Application.id.desc()).all()
     apps_data = []
     for app in applications:
@@ -197,10 +238,19 @@ async def create_customer(
     user = await get_current_user(request)
     if user.get("role") not in ("admin", "salesman"):
         raise HTTPException(status_code=403, detail="仅业务员和管理员可创建客户")
-    existing = db.query(Customer).filter(Customer.id_number == data.id_number).first()
+    existing = db.query(Customer).filter(
+        Customer.id_number == data.id_number,
+        Customer.is_deleted == False,  # noqa: E712
+    ).first()
     if existing:
         raise HTTPException(status_code=400, detail="该身份证号已存在")
+    # 手机号查重（仅当系统配置 reject_duplicate_phone 为真时拦截）
+    phone_error = _duplicate_phone_error(db, data.phone)
+    if phone_error:
+        raise HTTPException(status_code=400, detail=phone_error)
     customer = Customer(**data.model_dump())
+    if not customer.source:
+        customer.source = CustomerSource.OFFLINE.value
     customer.name_pinyin = get_pinyin_initial(customer.name)
     db.add(customer)
     db.flush()
@@ -241,7 +291,10 @@ async def update_customer(
     db: Session = Depends(get_db),
     user: dict = Depends(_require_roles("admin", "salesman")),
 ):
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    customer = db.query(Customer).filter(
+        Customer.id == customer_id,
+        Customer.is_deleted == False,  # noqa: E712
+    ).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
     if user.get("role") == "salesman" and customer.assigned_salesman_id != user.get("id"):
@@ -251,9 +304,18 @@ async def update_customer(
 
     # 身份证号唯一性预检
     if "id_number" in update_data and update_data["id_number"] != customer.id_number:
-        dup = db.query(Customer).filter(Customer.id_number == update_data["id_number"]).first()
+        dup = db.query(Customer).filter(
+            Customer.id_number == update_data["id_number"],
+            Customer.is_deleted == False,  # noqa: E712
+        ).first()
         if dup:
             raise HTTPException(status_code=400, detail="该身份证号已存在")
+
+    # 手机号唯一性预检（仅当系统配置 reject_duplicate_phone 为真时拦截）
+    if "phone" in update_data and update_data["phone"] != customer.phone:
+        phone_error = _duplicate_phone_error(db, update_data["phone"], exclude_customer_id=customer.id)
+        if phone_error:
+            raise HTTPException(status_code=400, detail=phone_error)
 
     # 记录目录同步所需的旧值（应用变更前）
     old_name = customer.name
@@ -317,6 +379,65 @@ async def update_customer(
     return CustomerResponse.model_validate(customer)
 
 
+@router.delete("/{customer_id}")
+async def delete_customer(
+    customer_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """软删除客户（移入回收站）。
+
+    权限：admin / salesman（salesman 仅限自己名下的客户）。
+    名下所有申报批次一并软删除，客户从归属中释放。
+    """
+    user = await get_current_user(request)
+    if user.get("role") not in ("admin", "salesman"):
+        raise HTTPException(status_code=403, detail="仅业务员和管理员可删除客户")
+
+    customer = db.query(Customer).filter(
+        Customer.id == customer_id,
+        Customer.is_deleted == False,  # noqa: E712
+    ).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    if user.get("role") == "salesman" and customer.assigned_salesman_id != user.get("id"):
+        raise HTTPException(status_code=403, detail="只能删除自己名下的客户")
+
+    applications = db.query(Application).filter(
+        Application.customer_id == customer_id,
+        Application.is_deleted == False,  # noqa: E712
+    ).all()
+
+    # 已进入评审流程（提交评审机构审核及之后）的批次不允许删除客户
+    REVIEW_STAGE_STATUSES = {"提交评审机构审核", "返修", "通过", "不通过"}
+    if any(app.status in REVIEW_STAGE_STATUSES for app in applications):
+        raise HTTPException(status_code=400, detail="该客户存在评审中的批次，无法删除")
+
+    now = datetime.utcnow()
+    customer.is_deleted = True
+    customer.deleted_at = now
+    # 释放客户归属，避免软删除记录仍占用归属/公海统计
+    customer.assigned_salesman_id = None
+    customer.is_public = False
+
+    for app in applications:
+        app.is_deleted = True
+        app.deleted_at = now
+
+    log = OperationLog(
+        user_id=user.get("user_id") or user.get("id"),
+        username=user.get("username", ""),
+        action="删除客户",
+        resource_type="customer",
+        resource_id=customer.id,
+        old_value={"name": customer.name, "application_count": len(applications)},
+        new_value={"detail": f"删除客户: {customer.name}, 批次数量: {len(applications)}"},
+    )
+    db.add(log)
+    db.commit()
+    return {"message": "客户已移入回收站"}
+
+
 @router.put("/{customer_id}/transfer")
 async def transfer_customer(
     customer_id: int,
@@ -329,7 +450,10 @@ async def transfer_customer(
     if user.get("role") not in ("admin", "salesman"):
         raise HTTPException(status_code=403, detail="仅业务员和管理员可操作")
 
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    customer = db.query(Customer).filter(
+        Customer.id == customer_id,
+        Customer.is_deleted == False,  # noqa: E712
+    ).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
 
@@ -412,7 +536,10 @@ async def batch_transfer_customers(
     if not target:
         raise HTTPException(status_code=400, detail="目标业务员不存在")
 
-    customers = db.query(Customer).filter(Customer.id.in_(customer_ids)).all()
+    customers = db.query(Customer).filter(
+        Customer.id.in_(customer_ids),
+        Customer.is_deleted == False,  # noqa: E712
+    ).all()
     count = 0
     for c in customers:
         old_id = c.assigned_salesman_id
