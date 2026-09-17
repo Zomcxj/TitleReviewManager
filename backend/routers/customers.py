@@ -155,9 +155,9 @@ async def get_stats(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/salesmen")
 async def list_salesmen(request: Request, db: Session = Depends(get_db)):
-    """获取所有业务员列表（用于转让选择）"""
+    """获取所有业务员列表（转让选择、客户列表业务员列展示）"""
     user = await get_current_user(request)
-    if user.get("role") not in ("admin", "salesman"):
+    if user.get("role") not in ("admin", "salesman", "reviewer"):
         raise HTTPException(status_code=403, detail="无权访问")
 
     salesmen = db.query(User).filter(User.role == "salesman").order_by(User.id).all()
@@ -195,6 +195,8 @@ async def create_customer(
     db: Session = Depends(get_db),
 ):
     user = await get_current_user(request)
+    if user.get("role") not in ("admin", "salesman"):
+        raise HTTPException(status_code=403, detail="仅业务员和管理员可创建客户")
     existing = db.query(Customer).filter(Customer.id_number == data.id_number).first()
     if existing:
         raise HTTPException(status_code=400, detail="该身份证号已存在")

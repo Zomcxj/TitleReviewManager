@@ -15,7 +15,7 @@
       </div>
       <div class="toolbar-right">
         <span class="result-count">共 {{ total }} 条</span>
-        <el-button type="success" icon="Download" @click="handleExport">导出 Excel</el-button>
+        <el-button v-if="authStore.isAdmin || authStore.isSalesman" type="success" icon="Download" @click="handleExport">导出 Excel</el-button>
       </div>
     </div>
 

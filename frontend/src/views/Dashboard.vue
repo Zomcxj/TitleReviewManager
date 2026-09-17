@@ -99,7 +99,7 @@
             <span>客户管理</span>
           </router-link>
           
-          <router-link to="/admin/reviews" class="action-item">
+          <router-link to="/admin/reviews" v-if="authStore.isReviewer || authStore.isAdmin" class="action-item">
             <div class="action-icon reviews">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="9 11 12 14 22 4"></polyline>
