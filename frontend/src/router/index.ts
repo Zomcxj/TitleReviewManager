@@ -3,6 +3,12 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 const routes: RouteRecordRaw[] = [
   { path: '/', redirect: '/login' },
   { path: '/login', name: 'Login', component: () => import('../views/Login.vue') },
+  {
+    path: '/change-password',
+    name: 'ChangePassword',
+    component: () => import('../views/ChangePassword.vue'),
+    meta: { requiresAuth: true },
+  },
   { path: '/apply', name: 'CustomerForm', component: () => import('../views/CustomerForm.vue') },
   { path: '/progress', name: 'ProgressQuery', component: () => import('../views/ProgressQuery.vue') },
   {
@@ -24,6 +30,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'finance', name: 'Finance', component: () => import('../views/Finance.vue'), meta: { roles: ['admin', 'salesman'] } },
       { path: 'system-config', name: 'SystemConfig', component: () => import('../views/SystemConfig.vue'), meta: { roles: ['admin'] } },
       { path: 'recycle-bin', name: 'RecycleBin', component: () => import('../views/RecycleBin.vue'), meta: { roles: ['admin'] } },
+      { path: 'backup', name: 'Backup', component: () => import('../views/Backup.vue'), meta: { roles: ['admin'] } },
     ],
   },
   { path: '/:pathMatch(.*)*', name: 'NotFound', component: () => import('../views/NotFound.vue') },
@@ -35,8 +42,17 @@ const router = createRouter({
 })
 
 router.beforeEach((to, _from, next) => {
+  const token = localStorage.getItem('access_token')
+
+  // 强制改密拦截：已登录且被标记必须改密时，只允许停留在改密页或登录页
+  if (token && localStorage.getItem('must_change_password') === '1') {
+    if (to.path !== '/change-password' && to.path !== '/login') {
+      next('/change-password')
+      return
+    }
+  }
+
   if (to.meta.requiresAuth) {
-    const token = localStorage.getItem('access_token')
     if (!token) {
       next('/login')
       return

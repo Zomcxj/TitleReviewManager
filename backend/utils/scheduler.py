@@ -49,10 +49,44 @@ def _acquire_lock() -> bool:
         return True
 
 
+def _maybe_run_backup(result: dict) -> None:
+    """按小时判断是否需要执行自动备份，并把结果写入 result。
+
+    备份可能耗时（打包材料文件），但运行在后台调度线程中，不影响请求链路。
+    备份失败只记日志 / 写入 warnings，不加入 errors —— 备份失败不应让整个
+    调度任务被判定为失败。
+    """
+    try:
+        from tasks import backup as backup_task
+    except Exception as e:
+        result["warnings"].append(f"备份模块导入失败: {e}")
+        logger.error(f"备份模块导入失败: {e}", exc_info=True)
+        return
+
+    try:
+        if not backup_task.should_run_now():
+            return
+        logger.info("到达备份时间点，开始执行自动备份")
+        outcome = backup_task.run_backup()
+        result["backup"] = outcome
+        if outcome.get("success"):
+            logger.info(f"自动备份成功: {outcome.get('db_backup')}")
+        else:
+            # 备份失败降级为 warning，避免拖垮整个调度任务的健康状态
+            result["warnings"].append(f"自动备份失败: {outcome.get('error')}")
+            logger.error(f"自动备份失败: {outcome.get('error')}")
+    except Exception as e:
+        result["warnings"].append(f"自动备份异常: {e}")
+        logger.error(f"自动备份异常: {e}", exc_info=True)
+
+
 def run_once() -> dict:
     """执行一轮全部调度任务（供定时线程与手动调用共用）"""
     from tasks import sla_scheduler
-    result = {"recovered": 0, "sla_notified": 0, "reminded": 0, "errors": []}
+    result = {
+        "recovered": 0, "sla_notified": 0, "reminded": 0,
+        "errors": [], "warnings": [], "backup": None,
+    }
 
     for name, fn in (
         ("客户自动回收", sla_scheduler.check_and_recovery_customers),
@@ -77,6 +111,9 @@ def run_once() -> dict:
     except Exception as e:
         result["errors"].append(f"清理登录尝试: {e}")
 
+    # 每日自动备份（数据库 + 材料文件）：仅当当前小时 == BACKUP_HOUR 且今天未备份过
+    _maybe_run_backup(result)
+
     return result
 
 
@@ -92,6 +129,9 @@ def _loop():
                     logger.warning(f"调度任务存在错误: {res['errors']}")
                 else:
                     logger.info("定时调度任务执行完成")
+                # 备份失败只作为 warning 提示，不影响调度整体判定
+                if res.get("warnings"):
+                    logger.warning(f"调度任务警告: {res['warnings']}")
             else:
                 logger.debug("其他 worker 正在执行调度任务，本次跳过")
         except Exception as e:

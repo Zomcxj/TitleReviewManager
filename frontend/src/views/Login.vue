@@ -129,7 +129,12 @@ async function handleLogin() {
   }
   loading.value = true
   try {
-    await authStore.login(form.username, form.password)
+    const data = await authStore.login(form.username, form.password)
+    if (data?.user?.must_change_password) {
+      ElMessage.warning('首次登录请修改密码')
+      router.push('/change-password')
+      return
+    }
     ElMessage.success('登录成功')
     router.push('/admin/dashboard')
   } catch (e: any) {

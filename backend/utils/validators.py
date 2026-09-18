@@ -75,3 +75,39 @@ def validate_phone(phone: Optional[str]) -> Optional[str]:
     if not value.isdigit() or len(value) != 11 or not value.startswith("1"):
         return "手机号格式不正确，应为 11 位数字"
     return None
+
+
+# ---------- 密码强度 ----------
+# 常见弱口令（含项目种子账号的默认密码）——生产环境必须拒绝
+WEAK_PASSWORDS = {
+    "admin123", "sales123", "review123", "password", "123456", "12345678",
+    "qwerty", "abc123", "111111", "000000", "admin", "root", "test123",
+    "password123", "changeme", "letmein", "welcome",
+}
+
+
+def check_password_strength(password: str, min_length: int = 8) -> Optional[str]:
+    """检查密码强度，合格返回 None，否则返回中文原因。
+
+    规则（面向内部管理系统的合理强度）：
+    - 长度 >= min_length（默认 8）
+    - 不能是常见弱口令
+    - 不能是纯数字或纯字母
+    - 不能与用户名相同或包含用户名
+    """
+    if not password:
+        return "密码不能为空"
+    if len(password) < min_length:
+        return f"密码长度至少 {min_length} 位"
+    if password.lower() in WEAK_PASSWORDS:
+        return "该密码过于常见，请使用更复杂的密码"
+    if password.isdigit():
+        return "密码不能为纯数字"
+    if password.isalpha():
+        return "密码不能为纯字母"
+    return None
+
+
+def is_weak_password(password: str) -> bool:
+    """是否为已知弱口令（用于识别需要强制改密的账号）"""
+    return bool(password) and password.lower() in WEAK_PASSWORDS

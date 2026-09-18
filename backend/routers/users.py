@@ -5,6 +5,7 @@ from models import User, Customer
 from schemas import UserResponse, UserCreate, UserUpdate, PasswordChange
 from auth import get_current_user, hash_password, verify_password
 from typing import List
+from datetime import datetime
 
 router = APIRouter(prefix="/api/users", tags=["用户管理"])
 
@@ -101,7 +102,12 @@ async def change_password(data: PasswordChange, request: Request, db: Session = 
         raise HTTPException(status_code=404, detail="用户不存在")
     if not verify_password(data.old_password, u.password_hash):
         raise HTTPException(status_code=400, detail="原密码错误")
+    if data.old_password == data.new_password:
+        raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
     u.password_hash = hash_password(data.new_password)
+    # 改密成功后解除强制改密标记，并记录改密时间（供密码有效期策略使用）
+    u.must_change_password = False
+    u.password_changed_at = datetime.utcnow()
     db.commit()
     return {"message": "密码已修改"}
 
@@ -125,5 +131,8 @@ async def reset_user_password(user_id: int, data: dict, request: Request, db: Se
     if not target:
         raise HTTPException(status_code=404, detail="目标用户不存在")
     target.password_hash = hash_password(new_password)
+    # 管理员重置的密码属于临时口令，要求该用户下次登录后自行修改
+    target.must_change_password = True
+    target.password_changed_at = datetime.utcnow()
     db.commit()
-    return {"message": "密码已修改"}
+    return {"message": "密码已修改，该用户下次登录需自行修改密码"}

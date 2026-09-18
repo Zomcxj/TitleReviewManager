@@ -67,6 +67,10 @@
             <el-icon><Delete /></el-icon>
             <span>回收站</span>
           </el-menu-item>
+          <el-menu-item v-if="authStore.isAdmin" index="/admin/backup" class="nav-item">
+            <el-icon><Download /></el-icon>
+            <span>数据备份</span>
+          </el-menu-item>
         </el-menu>
         
         <div class="user-bar">
@@ -105,6 +109,15 @@
         <el-header class="header">
           <div class="header-content">
             <h1 class="page-title">{{ pageTitle }}</h1>
+            <div class="header-actions">
+              <button class="header-action-btn" title="修改密码" @click="router.push('/change-password')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <span>修改密码</span>
+              </button>
+            </div>
           </div>
         </el-header>
         <el-main class="main-area">
@@ -136,6 +149,7 @@ import {
   Money,
   Setting,
   Delete,
+  Download,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -158,6 +172,7 @@ const pageTitle = computed(() => {
     '/admin/finance': '收费与证书管理',
     '/admin/system-config': '系统配置',
     '/admin/recycle-bin': '回收站',
+    '/admin/backup': '数据备份',
   }
   return map[route.path] || '职称评审管理系统'
 })
@@ -430,6 +445,32 @@ function handleMenuSelect(index: string) {
   color: #0f172a;
   margin: 0;
   letter-spacing: -0.3px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.header-action-btn:hover {
+  background: rgba(99, 102, 241, 0.08);
+  border-color: #c7d2fe;
+  color: #4f46e5;
 }
 
 .el-container {

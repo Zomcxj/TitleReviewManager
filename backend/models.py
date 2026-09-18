@@ -28,6 +28,11 @@ class User(Base):
     role = Column(String(20), nullable=False)
     real_name = Column(String(50))
     email = Column(String(120), nullable=True, comment="邮箱，用于外部通知推送")
+    must_change_password = Column(
+        Boolean, default=False, nullable=False,
+        comment="是否强制修改密码（种子账号/管理员重置后置位，登录后需先改密）",
+    )
+    password_changed_at = Column(DateTime, nullable=True, comment="最近一次修改密码时间")
     created_at = Column(DateTime, default=datetime.utcnow)
     is_deleted = Column(Boolean, default=False, nullable=False, index=True, comment="软删除标记")
     deleted_at = Column(DateTime, nullable=True)

@@ -14,6 +14,7 @@ class UserResponse(BaseModel):
     role: str
     real_name: Optional[str] = None
     email: Optional[str] = None
+    must_change_password: bool = False
     created_at: Optional[datetime] = None
 
     class Config:
@@ -39,6 +40,16 @@ class UserUpdate(BaseModel):
 class PasswordChange(BaseModel):
     old_password: str
     new_password: str = Field(..., min_length=6, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def _check_strength(cls, v: str) -> str:
+        """自助改密时校验强度：拒绝常见弱口令、纯数字、纯字母"""
+        from utils.validators import check_password_strength
+        err = check_password_strength(v)
+        if err:
+            raise ValueError(err)
+        return v
 
 
 class CustomerCreate(BaseModel):

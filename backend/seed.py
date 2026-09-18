@@ -28,16 +28,19 @@ def seed():
         for u in DEFAULT_USERS:
             existing = db.query(User).filter(User.username == u["username"]).first()
             if not existing:
+                # 种子账号使用文档化的默认口令，标记为必须改密 —— 生产环境首次登录后
+                # 会被强制跳转改密页，避免默认口令长期存活
                 user = User(
                     username=u["username"],
                     password_hash=hash_password(u["password"]),
                     role=u["role"],
                     real_name=u["real_name"],
+                    must_change_password=True,
                 )
                 db.add(user)
                 db.flush()
                 user_ids[u["username"]] = user.id
-                print(f"创建用户: {u['username']} ({u['real_name']})")
+                print(f"创建用户: {u['username']} ({u['real_name']}) [首次登录需修改密码]")
             else:
                 user_ids[u["username"]] = existing.id
 
@@ -224,7 +227,9 @@ def seed():
 
             for cat in categories:
                 filenames = sample_filenames.get(cat, ["材料.pdf"])
-                for fn in filenames:
+                # 同一类别下多份材料需要递增版本号（数据库有唯一约束
+                # uq_material_app_category_version，与真实上传逻辑保持一致）
+                for ver, fn in enumerate(filenames, start=1):
                     content = f"这是示例文件: {fn}\n用于职称申报系统测试。\n".encode("utf-8")
                     rel_path = save_file(customer_rel, cat, fn, content)
 
@@ -236,6 +241,7 @@ def seed():
                         file_size=len(content),
                         uploader_id=salesman1_id,
                         audit_status="待审核",
+                        version=ver,
                     )
                     db.add(material)
             db.flush()

@@ -271,17 +271,50 @@ docker compose exec backend alembic upgrade head
 0 2 * * * cd /app && python tasks/sla_scheduler.py
 ```
 
-### 6. 数据备份（重要）
+### 6. 数据备份
 
-项目未内置备份机制，生产环境请自行配置：
+**已内置自动备份**（默认每天凌晨 3 点，随内置调度器执行）：
+
+- 数据库：SQLite 用 sqlite3 backup API 做一致性快照后 gzip；PostgreSQL 用 pg_dump
+- 材料文件：打包 `STORAGE_BACKEND` 指向的存储根目录为 tar.gz
+- 每次备份写 `manifest_<时间戳>.json`（含类型/大小/文件数/结果）
+- 默认保留最近 7 份，超出自动清理
+
+配置（`.env`）：
+```bash
+BACKUP_ENABLED="1"          # 是否启用自动备份
+BACKUP_DIR=""               # 默认 backend/backups
+BACKUP_KEEP="7"             # 保留份数
+BACKUP_HOUR="3"             # 每天几点执行（0-23）
+BACKUP_INCLUDE_FILES="1"    # 是否一并备份材料文件
+BACKUP_COMPRESS="1"         # 是否 gzip 压缩
+```
+
+管理员也可在界面「数据备份」页查看配置、手动触发、浏览历史备份。
+
+#### 恢复步骤
 
 ```bash
-# PostgreSQL 每日备份
-docker compose exec -T db pg_dump -U titleadmin titleservice | gzip > backup_$(date +%F).sql.gz
+# 1. 停止服务（避免恢复过程中仍有写入）
+docker compose stop backend
 
-# NAS 材料目录（nas_data 卷）
-docker run --rm -v titleservicemanager_nas_data:/data -v $(pwd):/backup alpine   tar czf /backup/nas_$(date +%F).tar.gz -C /data .
+# 2. 恢复数据库
+#    SQLite：
+gzip -dk db_<时间戳>.sqlite.gz
+cp db_<时间戳>.sqlite <DATABASE_URL 指向的库文件>
+#    PostgreSQL：
+gzip -dk db_<时间戳>.sql.gz
+psql -U titleadmin -d titleservice -f db_<时间戳>.sql
+
+# 3. 恢复材料文件（解压到 storage.get_storage_root() 目录）
+tar -xzf files_<时间戳>.tar.gz -C <存储根目录>
+
+# 4. 重启并核对 manifest_<时间戳>.json
+docker compose start backend
 ```
+
+> PostgreSQL 环境需要容器内可执行 `pg_dump`（Dockerfile 已安装 postgresql-client）。
+> 外部 cron 方式：`BACKUP_ENABLED=0` 关闭内置，改为 `python tasks/backup.py`。
 
 ### 7. 安全建议
 
