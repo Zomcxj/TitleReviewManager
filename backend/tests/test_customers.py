@@ -7,7 +7,7 @@ def create_test_customer(client: TestClient, token_cookie: str):
         "/api/customers/",
         json={
             "name": "Test Customer",
-            "id_number": "110101199001011234",
+            "id_number": "110101199001011237",
             "phone": "13800138000",
             "education": "本科",
             "current_title": "无",
@@ -28,7 +28,7 @@ def test_create_customer(client: TestClient, test_user):
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == "Test Customer"
-    assert data["id_number"] == "110101199001011234"
+    assert data["id_number"] == "110101199001011237"
     assert "id" in data
 
 def test_read_customers(client: TestClient, test_user):

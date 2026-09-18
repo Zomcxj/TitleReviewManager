@@ -74,9 +74,15 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
+    # SQLite 不支持 ALTER 约束，需用 batch 模式（copy-and-move）执行迁移；
+    # PostgreSQL 等支持 ALTER 的数据库保持默认行为。
+    is_sqlite = str(config.get_main_option("sqlalchemy.url") or "").startswith("sqlite")
+
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=is_sqlite,
         )
 
         with context.begin_transaction():

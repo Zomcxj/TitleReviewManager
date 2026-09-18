@@ -211,3 +211,81 @@ server {
 | 业务员 | salesman2 | sales123 |
 | 审核员 | reviewer1 | review123 |
 | 审核员 | reviewer2 | review123 |
+
+
+## 生产部署检查清单
+
+上线前请逐项确认：
+
+### 1. 必填配置（.env）
+
+```bash
+cp .env.example .env
+# 至少设置以下三项，否则 compose 会拒绝启动：
+#   JWT_SECRET_KEY       >= 32 位随机字符串（不要用示例值）
+#   POSTGRES_PASSWORD    数据库强密码
+#   ALLOWED_ORIGINS       你的实际域名
+```
+
+生成强密钥：`python -c "import secrets; print(secrets.token_urlsafe(48))"`
+
+### 2. 启动
+
+```bash
+docker compose up -d --build
+docker compose logs -f backend     # 观察迁移与调度器启动日志
+```
+
+容器启动时会自动执行 `alembic upgrade head`，无需手工迁移。
+
+### 3. 上线自检
+
+```bash
+curl http://localhost:8000/api/health          # 基础探针
+curl http://localhost:8000/api/health/detail   # 配置自检（会提示弱密钥/存储不可写等问题）
+```
+
+`/api/health/detail` 会检查：数据库连通性与类型、JWT 密钥强度、存储目录可写、
+外部通知渠道、系统配置可读性、调度器状态。生产环境应全部为 `OK`。
+
+### 4. 数据库迁移
+
+```bash
+docker compose exec backend alembic current    # 当前版本
+docker compose exec backend alembic upgrade head
+```
+
+迁移使用 batch 模式兼容 SQLite；生产 PostgreSQL 为原生 ALTER。
+
+> 注意：应用启动时还有一层 `schema_sync` 兜底（只加表/加列/加索引，绝不删改），
+> 用于「代码已更新但忘记跑迁移」的场景。正式变更仍应生成 Alembic 迁移。
+
+### 5. 定时任务
+
+内置调度器默认开启（每 60 分钟执行 SLA 回收/超时提醒/临期提醒 + 清理过期登录记录）。
+多 worker 场景下通过文件锁保证同一时刻只有一个 worker 执行。
+
+若希望改用外部 cron：
+```bash
+# .env 中设置 SCHEDULER_ENABLED=0
+0 2 * * * cd /app && python tasks/sla_scheduler.py
+```
+
+### 6. 数据备份（重要）
+
+项目未内置备份机制，生产环境请自行配置：
+
+```bash
+# PostgreSQL 每日备份
+docker compose exec -T db pg_dump -U titleadmin titleservice | gzip > backup_$(date +%F).sql.gz
+
+# NAS 材料目录（nas_data 卷）
+docker run --rm -v titleservicemanager_nas_data:/data -v $(pwd):/backup alpine   tar czf /backup/nas_$(date +%F).tar.gz -C /data .
+```
+
+### 7. 安全建议
+
+- 默认种子账号（admin/admin123 等）**仅供开发**，生产环境请立即改密码或不要执行 `seed.py`
+- 建议在反向代理（Nginx/Caddy）上启用 HTTPS，并设置 `PUBLIC_URL` 为 https 地址
+- 数据库端口不要暴露到公网（compose 已默认不映射）
+- 定期检查 `/api/audit` 中的「登录失败」记录

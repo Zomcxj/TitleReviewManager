@@ -128,10 +128,15 @@ async def upload_material(
     rel = _get_customer_dir(customer)
     stored_path = save_file(rel, category, file.filename, content)
 
-    max_version = db.query(Material).filter(
-        Material.application_id == application_id,
-        Material.category == category,
-    ).order_by(Material.version.desc()).first()
+    # 版本号加行级锁，避免并发上传同类别材料时取到相同版本号
+    # （SQLite 忽略 FOR UPDATE 但写事务本身串行；PostgreSQL 下真正阻塞并发事务）
+    max_version = (
+        db.query(Material)
+        .filter(Material.application_id == application_id, Material.category == category)
+        .order_by(Material.version.desc())
+        .with_for_update()
+        .first()
+    )
     new_version = (max_version.version if max_version else 0) + 1
 
     material = Material(

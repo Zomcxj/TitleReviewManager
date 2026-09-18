@@ -1,4 +1,5 @@
 from sqlalchemy import (
+    UniqueConstraint,
     Column, Integer, String, Text, DateTime, ForeignKey, Enum, Float, Boolean, JSON, Numeric
 )
 from sqlalchemy.orm import relationship
@@ -46,7 +47,7 @@ class Customer(Base):
     position = Column(String(100))
     professional_years = Column(Integer)
     project_experiences = Column(Text)
-    assigned_salesman_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    assigned_salesman_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True, comment="归属业务员（业务员数据隔离高频过滤）")
     is_public = Column(Boolean, default=False, index=True, comment="是否在公海池")
     name_pinyin = Column(String(10), index=True, comment="拼音首字母")
     last_follow_up_at = Column(DateTime, nullable=True, comment="最后跟进时间")
@@ -66,14 +67,14 @@ class Customer(Base):
 class Application(Base):
     __tablename__ = "applications"
     id = Column(Integer, primary_key=True, index=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
     professional_category = Column(String(100))
     title_level = Column(String(50))
-    status = Column(String(20), default=ApplicationStatus.INITIAL.value)
+    status = Column(String(20), default=ApplicationStatus.INITIAL.value, index=True)
     batch_number = Column(String(50), unique=True)
     submitted_at = Column(DateTime)
     institution_name = Column(String(200))
-    assigned_reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    assigned_reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     # 申报周期
     cycle_year = Column(Integer, nullable=True, index=True, comment="申报年度")
     cycle_deadline = Column(DateTime, nullable=True, comment="该批次申报截止时间")
@@ -104,14 +105,18 @@ class Application(Base):
 
 class Material(Base):
     __tablename__ = "materials"
+    __table_args__ = (
+        # 同一批次同一类别的版本号必须唯一 —— 数据库层兜底，杜绝并发上传产生重复版本
+        UniqueConstraint("application_id", "category", "version", name="uq_material_app_category_version"),
+    )
     id = Column(Integer, primary_key=True, index=True)
-    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False)
-    category = Column(String(30), nullable=False)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    category = Column(String(30), nullable=False, index=True)
     filename = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
     file_size = Column(Integer)
     uploader_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    audit_status = Column(String(20), default=AuditStatus.PENDING.value)
+    audit_status = Column(String(20), default=AuditStatus.PENDING.value, index=True)
     remark = Column(Text)
     version = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -124,8 +129,8 @@ class Material(Base):
 class Review(Base):
     __tablename__ = "reviews"
     id = Column(Integer, primary_key=True, index=True)
-    material_id = Column(Integer, ForeignKey("materials.id"), nullable=True)
-    application_id = Column(Integer, ForeignKey("applications.id"), nullable=True)
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=True, index=True)
     reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     result = Column(String(20), nullable=False)
     issue_type = Column(String(50))
@@ -141,7 +146,7 @@ class Review(Base):
 class Feedback(Base):
     __tablename__ = "feedbacks"
     id = Column(Integer, primary_key=True, index=True)
-    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
     feedback_type = Column(String(20), nullable=False)
     content = Column(Text)
     attachment_path = Column(String(500))
@@ -226,3 +231,23 @@ class PaymentRecord(Base):
 
     application = relationship("Application", back_populates="payment_records")
     created_by = relationship("User", foreign_keys=[created_by_id])
+
+
+class LoginAttempt(Base):
+    """登录尝试记录（数据库存储，多 worker 共享，避免内存态限流被 worker 数放大）"""
+    __tablename__ = "login_attempts"
+    id = Column(Integer, primary_key=True, index=True)
+    scope = Column(String(20), nullable=False, index=True, comment="ip 或 account")
+    key = Column(String(120), nullable=False, index=True, comment="IP 地址或用户名")
+    attempted_at = Column(DateTime, default=datetime.utcnow, index=True)
+    success = Column(Boolean, default=False, nullable=False, comment="该次尝试是否成功")
+
+
+class AccountLock(Base):
+    """账号锁定状态（数据库存储，多 worker 共享）"""
+    __tablename__ = "account_locks"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, nullable=False, index=True)
+    failed_count = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

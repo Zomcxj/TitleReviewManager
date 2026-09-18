@@ -3,11 +3,10 @@
 安全设计要点：
 1. 必须同时提供「完整身份证号」+「手机号后 4 位」才能查询，防止仅凭身份证号枚举客户。
 2. 任一不匹配统一返回 404 同一文案，不区分"身份证不存在"与"手机号不匹配"，避免信息泄露。
-3. 按 IP 内存限流（每 5 分钟最多 20 次）。
+3. 按 IP 限流（每 5 分钟最多 20 次），计数存数据库以支持多 worker 部署。
 4. 响应体只包含进度信息，绝不返回身份证号 / 手机号 / 工作单位等敏感字段。
 """
 
-import time
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,27 +15,12 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Application, Customer, Feedback, Material
+from utils.login_guard import check_ip_rate_limit, record_attempt
 
 router = APIRouter(prefix="/api/public-progress", tags=["进度查询"])
 
-# ---------- 限流：模块级内存字典，按 IP 记录查询时间戳 ----------
-_QUERY_ATTEMPTS: Dict[str, List[float]] = {}
 RATE_WINDOW_SECONDS = 300  # 5 分钟
 MAX_QUERIES_PER_WINDOW = 20
-
-
-def check_query_rate_limit(ip: str) -> None:
-    """超过窗口内最大查询次数则抛 429。"""
-    now = time.time()
-    if ip not in _QUERY_ATTEMPTS:
-        _QUERY_ATTEMPTS[ip] = []
-    _QUERY_ATTEMPTS[ip] = [t for t in _QUERY_ATTEMPTS[ip] if now - t < RATE_WINDOW_SECONDS]
-    if len(_QUERY_ATTEMPTS[ip]) >= MAX_QUERIES_PER_WINDOW:
-        raise HTTPException(status_code=429, detail="查询过于频繁，请稍后再试")
-
-
-def record_query(ip: str) -> None:
-    _QUERY_ATTEMPTS.setdefault(ip, []).append(time.time())
 
 
 # ---------- 进度阶段映射 ----------
@@ -113,8 +97,10 @@ async def query_progress(
     db: Session = Depends(get_db),
 ):
     client_ip = request.client.host if request.client else "unknown"
-    check_query_rate_limit(client_ip)
-    record_query(client_ip)
+    # 限流走数据库（多 worker 共享计数）；复用登录尝试表，scope 区分
+    check_ip_rate_limit(db, f"progress:{client_ip}", MAX_QUERIES_PER_WINDOW, RATE_WINDOW_SECONDS)
+    record_attempt(db, f"progress:{client_ip}")
+    db.commit()
 
     not_found = HTTPException(
         status_code=404,

@@ -144,7 +144,7 @@ async def self_register(
     token = db.query(RegistrationToken).filter(
         RegistrationToken.token == data.token,
         RegistrationToken.is_active == True,
-    ).first()
+    ).with_for_update().first()
     if not token:
         raise HTTPException(status_code=400, detail="注册链接无效")
     now = datetime.now(timezone.utc)

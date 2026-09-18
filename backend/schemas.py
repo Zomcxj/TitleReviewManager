@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator
 from typing import Optional, List
 from datetime import datetime, timezone
 
@@ -55,6 +55,26 @@ class CustomerCreate(BaseModel):
     project_experiences: Optional[str] = None
     assigned_salesman_id: Optional[int] = None
     source: Optional[str] = Field(None, max_length=50)
+
+    @field_validator("id_number")
+    @classmethod
+    def _check_id_number(cls, v: str) -> str:
+        """新增客户时校验身份证号校验位（存量数据不校验，避免阻断历史数据编辑）"""
+        from utils.validators import validate_id_number, normalize_id_number
+        value = normalize_id_number(v)
+        err = validate_id_number(value)
+        if err:
+            raise ValueError(err)
+        return value
+
+    @field_validator("phone")
+    @classmethod
+    def _check_phone(cls, v):
+        from utils.validators import validate_phone
+        err = validate_phone(v)
+        if err:
+            raise ValueError(err)
+        return v
 
 
 class CustomerUpdate(BaseModel):

@@ -1,49 +1,69 @@
 version: "3.9"
 
+# 生产部署编排。
+# 前置：复制 .env.example 为 .env 并至少设置 JWT_SECRET_KEY / POSTGRES_PASSWORD。
+# 启动：docker compose up -d --build
+
 services:
   db:
     image: postgres:15-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: titleadmin
-      POSTGRES_PASSWORD: changeme
-      POSTGRES_DB: titleservice
+      POSTGRES_USER: ${POSTGRES_USER:-titleadmin}
+      # 不再使用硬编码弱密码，必须由 .env 提供
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-titleservice}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U titleadmin -d titleservice"]
-      interval: 5s
-      timeout: 3s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-titleadmin} -d ${POSTGRES_DB:-titleservice}"]
+      interval: 10s
+      timeout: 5s
       retries: 5
+    # 数据库不对宿主机暴露端口，仅容器网络内可访问
 
   backend:
     build:
       context: .
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${APP_PORT:-8000}:8000"
     environment:
-      DATABASE_URL: postgresql://titleadmin:changeme@db:5432/titleservice
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production}
-      STORAGE_BACKEND: local
+      DATABASE_URL: postgresql://${POSTGRES_USER:-titleadmin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-titleservice}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?请在 .env 中设置 JWT_SECRET_KEY}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
       NAS_ROOT: /data/nas
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
+      # 外部通知渠道（可选，未配置则只用站内通知）
+      EXTERNAL_NOTIFY_TYPES: ${EXTERNAL_NOTIFY_TYPES:-status_change,sla_overdue,pool_recovery}
+      EMAIL_NOTIFY_ENABLED: ${EMAIL_NOTIFY_ENABLED:-0}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-1}
+      SMTP_USE_STARTTLS: ${SMTP_USE_STARTTLS:-0}
+      WEBHOOK_NOTIFY_ENABLED: ${WEBHOOK_NOTIFY_ENABLED:-0}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
     volumes:
+      # 仅挂载持久化数据，不挂载源码（避免容器内代码与镜像不一致）
       - nas_data:/data/nas
-      - ./backend:/app
+      - uploads_data:/app/uploads
     depends_on:
       db:
         condition: service_healthy
-
-  frontend:
-    image: node:20-alpine
-    working_dir: /app
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-    depends_on:
-      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
 
 volumes:
   pgdata:
   nas_data:
+  uploads_data:

@@ -57,7 +57,7 @@ def seed():
         # 3. Create customers
         customers_data = [
             {
-                "name": "陈明辉", "id_number": "110101198501011234", "phone": "13800138001",
+                "name": "陈明辉", "id_number": "110101198501011239", "phone": "13800138001",
                 "education": "本科", "current_title": "工程师", "current_title_year": 2019,
                 "work_unit": "中建第三工程有限公司", "position": "项目经理",
                 "professional_years": 8,
@@ -65,7 +65,7 @@ def seed():
                 "project_experiences": '[{"name":"XX商业综合体项目","start_date":"2022-03","end_date":"2023-06","role":"技术负责人","description":"负责主体结构施工方案编制与技术交底"},{"name":"XX住宅楼项目","start_date":"2021-01","end_date":"2022-02","role":"施工员","description":"负责现场施工管理与质量控制"}]',
             },
             {
-                "name": "王晓芳", "id_number": "310101199002022345", "phone": "13900139002",
+                "name": "王晓芳", "id_number": "310101199002022349", "phone": "13900139002",
                 "education": "硕士研究生", "current_title": "讲师", "current_title_year": 2020,
                 "work_unit": "XX职业技术学院", "position": "专业教师",
                 "professional_years": 5,
@@ -73,7 +73,7 @@ def seed():
                 "project_experiences": '[{"name":"省级教改项目","start_date":"2023-01","end_date":"2024-01","role":"主持人","description":"主持《高职工程类专业实践教学改革研究》教改项目"}]',
             },
             {
-                "name": "刘志强", "id_number": "440101198703033456", "phone": "13700137003",
+                "name": "刘志强", "id_number": "440101198703033459", "phone": "13700137003",
                 "education": "大专", "current_title": "助理工程师", "current_title_year": 2018,
                 "work_unit": "广州XX电子科技有限公司", "position": "技术主管",
                 "professional_years": 6,
@@ -81,7 +81,7 @@ def seed():
                 "project_experiences": "",
             },
             {
-                "name": "赵雪梅", "id_number": "510101199104044567", "phone": "13600136004",
+                "name": "赵雪梅", "id_number": "510101199104044562", "phone": "13600136004",
                 "education": "本科", "current_title": "主治医师", "current_title_year": 2021,
                 "work_unit": "成都XX区人民医院", "position": "内科医师",
                 "professional_years": 7,
@@ -89,7 +89,7 @@ def seed():
                 "project_experiences": "",
             },
             {
-                "name": "孙建国", "id_number": "330101198205055678", "phone": "13500135005",
+                "name": "孙建国", "id_number": "330101198205055676", "phone": "13500135005",
                 "education": "本科", "current_title": "工程师", "current_title_year": 2017,
                 "work_unit": "杭州XX建筑设计院", "position": "结构设计师",
                 "professional_years": 10,
@@ -97,7 +97,7 @@ def seed():
                 "project_experiences": '[{"name":"XX高层住宅项目","start_date":"2022-06","end_date":"2023-12","role":"结构专业负责人","description":"负责30层高层住宅结构设计与施工图审查"},{"name":"XX产业园项目","start_date":"2020-03","end_date":"2021-08","role":"设计师","description":"参与钢结构厂房设计"}]',
             },
             {
-                "name": "周丽华", "id_number": "420101198806066789", "phone": "13400134006",
+                "name": "周丽华", "id_number": "420101198806066786", "phone": "13400134006",
                 "education": "硕士研究生", "current_title": "工程师", "current_title_year": 2022,
                 "work_unit": "武汉XX环保工程有限公司", "position": "环保工程师",
                 "professional_years": 4,
@@ -105,7 +105,7 @@ def seed():
                 "project_experiences": "",
             },
             {
-                "name": "吴伟强", "id_number": "500101199307077890", "phone": "13300133007",
+                "name": "吴伟强", "id_number": "500101199307077899", "phone": "13300133007",
                 "education": "本科", "current_title": "助理工程师", "current_title_year": 2020,
                 "work_unit": "重庆XX路桥工程有限公司", "position": "桥梁设计师",
                 "professional_years": 3,
@@ -113,7 +113,7 @@ def seed():
                 "project_experiences": "",
             },
             {
-                "name": "郑雅文", "id_number": "610101198508088901", "phone": "13200132008",
+                "name": "郑雅文", "id_number": "610101198508088907", "phone": "13200132008",
                 "education": "博士研究生", "current_title": "副研究员", "current_title_year": 2018,
                 "work_unit": "西安XX研究院", "position": "课题组长",
                 "professional_years": 8,
