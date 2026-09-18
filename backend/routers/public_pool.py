@@ -53,8 +53,12 @@ async def list_public_customers(
             Application.is_deleted == False,  # noqa: E712
         ).order_by(desc(Application.id)).first()
         
+        item = CustomerResponse.model_validate(c).model_dump()
+        # 公海客户尚未归属，除管理员外一律脱敏（避免批量抓取证件号）
+        from utils.masking import apply_customer_masking
+        apply_customer_masking(item, current_user, c)
         results.append({
-            **CustomerResponse.model_validate(c).model_dump(),
+            **item,
             "current_status": last_app.status if last_app else None,
             "days_in_pool": (datetime.utcnow() - c.public_at).days if c.public_at else 0,
         })

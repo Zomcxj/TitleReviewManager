@@ -71,6 +71,10 @@
             <el-icon><Download /></el-icon>
             <span>数据备份</span>
           </el-menu-item>
+          <el-menu-item v-if="authStore.isAdmin" index="/admin/client-errors" class="nav-item">
+            <el-icon><Warning /></el-icon>
+            <span>前端错误</span>
+          </el-menu-item>
           <el-menu-item index="/admin/sessions" class="nav-item">
             <el-icon><Monitor /></el-icon>
             <span>登录设备</span>
@@ -155,6 +159,7 @@ import {
   Delete,
   Download,
   Monitor,
+  Warning,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -179,6 +184,7 @@ const pageTitle = computed(() => {
     '/admin/recycle-bin': '回收站',
     '/admin/backup': '数据备份',
     '/admin/sessions': '登录设备',
+    '/admin/client-errors': '前端错误',
   }
   return map[route.path] || '职称评审管理系统'
 })

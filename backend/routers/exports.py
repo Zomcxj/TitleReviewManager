@@ -4,8 +4,9 @@ from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from database import get_db
-from models import Customer, Application, User, Material
+from models import Customer, Application, User, Material, OperationLog
 from auth import get_current_user
+from utils.masking import mask_id_number, mask_phone
 from datetime import datetime, timezone
 import openpyxl
 import os
@@ -13,6 +14,25 @@ import tempfile
 from io import BytesIO
 
 router = APIRouter(prefix="/api/exports", tags=["数据导出"])
+
+
+def _log_export(db, current_user: dict, action: str, detail: str = "") -> None:
+    """记录导出审计日志。
+
+    导出是全量资料外流的主要途径，必须留痕：谁、何时、导了什么、
+    是否脱敏。失败不影响导出本身（审计是附属能力）。
+    """
+    try:
+        db.add(OperationLog(
+            user_id=current_user.get("user_id") or current_user.get("id"),
+            username=current_user.get("username", ""),
+            action=action,
+            resource_type="export",
+            new_value={"detail": detail} if detail else None,
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
 
 EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 # 流式读取临时文件的块大小
@@ -133,6 +153,7 @@ async def download_excel_template(request: Request):
 async def export_customers(
     status: str = Query(None),
     keyword: str = Query(None),
+    mask: bool = Query(False, description="是否脱敏身份证号与手机号（对外发送建议开启）"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -180,8 +201,8 @@ async def export_customers(
                 continue
             ws.append([
                 customer.name,
-                customer.id_number + "\t",
-                customer.phone or "",
+                mask_id_number(customer.id_number) if mask else customer.id_number + "\t",
+                mask_phone(customer.phone) if mask else (customer.phone or ""),
                 customer.education or "",
                 customer.current_title or "",
                 customer.current_title_year or "",
@@ -199,6 +220,12 @@ async def export_customers(
 
     from urllib.parse import quote
     filename = quote(f"客户列表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+
+    # 导出审计：导出的是全量客户资料（含证件号），必须留痕可追溯
+    _log_export(
+        db, current_user, "导出客户列表",
+        detail=f"脱敏={'是' if mask else '否'}, 状态筛选={status or '全部'}, 关键词={keyword or '无'}",
+    )
 
     return _stream_write_only_workbook(
         "客户列表",
@@ -258,6 +285,8 @@ async def export_applications(
 
     from urllib.parse import quote
     filename = quote(f"申报批次_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+
+    _log_export(db, current_user, "导出申报批次", detail=f"状态筛选={status or '全部'}")
 
     return _stream_write_only_workbook(
         "申报批次",

@@ -20,7 +20,11 @@ async def batch_assign_customers(
 ):
     if current_user.get("role") not in ["admin"]:
         raise HTTPException(status_code=403, detail="只有管理员可以批量分配客户")
-    
+
+    from utils.batch_guard import validate_batch_ids, check_batch_rate_limit
+    customer_ids = validate_batch_ids(customer_ids, "客户")
+    check_batch_rate_limit(db, current_user, "assign-customers")
+
     salesman = db.query(User).filter(User.id == salesman_id, User.role == "salesman").first()
     if not salesman:
         raise HTTPException(status_code=404, detail="指定业务员不存在")
@@ -73,7 +77,11 @@ async def batch_review(
     
     if current_user.get("role") not in ["reviewer", "admin"]:
         raise HTTPException(status_code=403, detail="只有审核员可以批量审核")
-    
+
+    from utils.batch_guard import validate_batch_ids, check_batch_rate_limit
+    application_ids = validate_batch_ids(application_ids, "申报批次")
+    check_batch_rate_limit(db, current_user, "review-batch")
+
     if status not in ["通过", "不通过", "返修"]:
         raise HTTPException(status_code=400, detail="状态无效")
     
@@ -121,7 +129,11 @@ async def batch_release_customers(
 ):
     if current_user.get("role") not in ["admin"]:
         raise HTTPException(status_code=403, detail="只有管理员可以批量释放")
-    
+
+    from utils.batch_guard import validate_batch_ids, check_batch_rate_limit
+    customer_ids = validate_batch_ids(customer_ids, "客户")
+    check_batch_rate_limit(db, current_user, "release-customers")
+
     updated_count = 0
     for customer_id in customer_ids:
         customer = db.query(Customer).filter(Customer.id == customer_id).first()

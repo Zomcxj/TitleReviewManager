@@ -289,3 +289,23 @@ class UserSession(Base):
     revoked_at = Column(DateTime, nullable=True, comment="被主动下线的时间；非空即失效")
 
     user = relationship("User", foreign_keys=[user_id])
+
+
+class ClientError(Base):
+    """前端错误上报（用于线上问题排查）。
+
+    前端报错此前只在用户浏览器弹提示，排查全靠用户描述（"点那个按钮就报错了"）。
+    这里收集到后端，让管理员能看到真实错误堆栈与发生频次。
+    """
+    __tablename__ = "client_errors"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    username = Column(String(50), nullable=True, index=True)
+    message = Column(Text, nullable=False, comment="错误信息")
+    stack = Column(Text, nullable=True, comment="堆栈（截断保存）")
+    url = Column(String(500), nullable=True, comment="出错页面路径")
+    user_agent = Column(String(255), nullable=True)
+    ip_address = Column(String(50), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    user = relationship("User", foreign_keys=[user_id])

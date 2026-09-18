@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
 from database import engine, Base
 from sqlalchemy import text
-from routers import auth, customers, applications, materials, reviews, feedback, registration, audit, exports, notifications, follow_ups, public_pool, batch, dashboard, users, imports, word_import, public_progress, finance, system_config, recycle_bin, backup
+from routers import auth, customers, applications, materials, reviews, feedback, registration, audit, exports, notifications, follow_ups, public_pool, batch, dashboard, users, imports, word_import, public_progress, finance, system_config, recycle_bin, backup, client_errors
 import os, logging
 from datetime import datetime, timezone
 
@@ -52,6 +52,7 @@ app.include_router(finance.router)
 app.include_router(system_config.router)
 app.include_router(recycle_bin.router)
 app.include_router(backup.router)
+app.include_router(client_errors.router)
 
 # 注意：uploads 目录不再静态挂载 —— 审核附件、反馈附件必须走鉴权下载接口，
 # 避免客户敏感文件被匿名访问（原先 /uploads 是完全公开的）。

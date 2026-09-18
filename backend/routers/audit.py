@@ -169,6 +169,19 @@ async def export_operation_logs(
         _safe_remove(tmp_path)
         raise
 
+    # 导出审计日志本身也要留痕（审计数据外流同样需要可追溯）
+    try:
+        db.add(OperationLog(
+            user_id=current_user.get("user_id") or current_user.get("id"),
+            username=current_user.get("username", ""),
+            action="导出审计日志",
+            resource_type="export",
+            new_value={"detail": f"筛选: action={action or '全部'}, resource_type={resource_type or '全部'}"},
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+
     filename = quote(f"操作审计日志_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", safe="")
     return StreamingResponse(
         _iter_file(tmp_path),

@@ -146,8 +146,12 @@ async def list_customers(
         materials_count = 0
         if app:
             materials_count = db.query(func.count(Material.id)).filter(Material.application_id == app.id).scalar() or 0
+        item = CustomerResponse.model_validate(customer).model_dump()
+        # 字段级权限：业务员看他人客户 / 审核员 → 证件号与手机号脱敏
+        from utils.masking import apply_customer_masking
+        apply_customer_masking(item, user, customer)
         results.append({
-            **CustomerResponse.model_validate(customer).model_dump(),
+            **item,
             "current_status": app.status if app else "未知",
             "application_id": app.id if app else None,
             "materials_count": materials_count,
@@ -223,8 +227,11 @@ async def get_customer(customer_id: int, request: Request, db: Session = Depends
             **ApplicationResponse.model_validate(app).model_dump(),
             "materials_count": len(materials),
         })
+    detail = CustomerResponse.model_validate(customer).model_dump()
+    from utils.masking import apply_customer_masking
+    apply_customer_masking(detail, user, customer)
     return {
-        **CustomerResponse.model_validate(customer).model_dump(),
+        **detail,
         "applications": apps_data,
     }
 

@@ -129,13 +129,15 @@
         </div>
       </template>
       <el-space>
-        <el-button @click="doExport('customers')">
+        <el-button :loading="exporting" @click="doExport('customers')">
           <el-icon><Download /></el-icon> 导出客户列表
         </el-button>
-        <el-button @click="doExport('applications')">
+        <el-checkbox v-model="maskExport" :disabled="exporting">导出时脱敏身份证与手机号</el-checkbox>
+        <el-button :loading="exporting" @click="doExport('applications')">
           <el-icon><Download /></el-icon> 导出申报批次
         </el-button>
       </el-space>
+      <p class="mask-tip">对外发送名单时建议勾选脱敏（身份证显示为 110101********0015，手机号显示为 138****8001）</p>
     </el-card>
   </div>
 </template>
@@ -152,6 +154,9 @@ const excelFile = ref<File | null>(null)
 const wordLoading = ref(false)
 const loading = ref(false)
 const result = ref<any>(null)
+// 导出客户列表时是否脱敏身份证号与手机号（对外发送名单时建议开启）
+const maskExport = ref(false)
+const exporting = ref(false)
 
 // Word 模板相关
 function downloadTemplate() {
@@ -236,8 +241,14 @@ async function submitUpload() {
 }
 
 async function doExport(type: string) {
+  exporting.value = true
   try {
-    const response = await api.post(`/api/exports/${type}`, null, { responseType: 'blob' })
+    // 脱敏开关只对客户列表生效（该接口支持 mask 查询参数）
+    const params = type === 'customers' && maskExport.value ? { mask: true } : undefined
+    const response = await api.post(`/api/exports/${type}`, null, {
+      responseType: 'blob',
+      params,
+    })
     const url = window.URL.createObjectURL(new Blob([response.data]))
     const link = document.createElement('a')
     link.href = url
@@ -246,6 +257,8 @@ async function doExport(type: string) {
     window.URL.revokeObjectURL(url)
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '导出失败')
+  } finally {
+    exporting.value = false
   }
 }
 </script>
@@ -285,5 +298,12 @@ async function doExport(type: string) {
   flex: 1 1 180px;
   min-width: 140px;
   max-width: 320px;
+}
+
+.mask-tip {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.6;
 }
 </style>
