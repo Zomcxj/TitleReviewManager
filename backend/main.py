@@ -18,8 +18,10 @@ app = FastAPI(title="职称服务内部管理平台", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # 安全响应头（CSP / X-Frame-Options / nosniff 等），详见 utils/security_headers.py
-from utils.security_headers import SecurityHeadersMiddleware
+from utils.security_headers import SecurityHeadersMiddleware, HttpsRedirectMiddleware
 app.add_middleware(SecurityHeadersMiddleware)
+# 强制 HTTPS 跳转（FORCE_HTTPS=1 时生效；健康检查路径豁免）
+app.add_middleware(HttpsRedirectMiddleware)
 
 app.include_router(auth.router)
 app.include_router(customers.router)

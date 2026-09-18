@@ -53,8 +53,9 @@ def _write_login_log(db: Session, *, user_id, username, action: str, request: Re
 
 @router.post("/login")
 async def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    # Get client IP
-    client_ip = request.client.host if request.client else "unknown"
+    # Get client IP（反代场景下从 X-Forwarded-For 解析，见 utils/request_context）
+    from utils.request_context import get_client_ip, cookie_extra_kwargs
+    client_ip = get_client_ip(request)
 
     # 1. Rate limiting per IP（数据库存储，多 worker 共享计数）
     check_ip_rate_limit(db, client_ip, MAX_ATTEMPTS_PER_WINDOW, RATE_WINDOW_SECONDS)
@@ -120,7 +121,11 @@ async def login(req: LoginRequest, request: Request, db: Session = Depends(get_d
     response_data = {"message": "登录成功", "user": user_dict}
     resp = JSONResponse(content=response_data)
     # Cookie 生命周期与 JWT 有效期(480min)保持一致，避免 cookie 残留但 token 已过期
-    resp.set_cookie(key="access_token", value=token, httponly=True, samesite="lax", max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+    resp.set_cookie(
+        key="access_token", value=token,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        **cookie_extra_kwargs(),
+    )
     return resp
 
 

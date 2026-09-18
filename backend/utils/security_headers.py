@@ -59,3 +59,31 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
             )
         return response
+
+
+class HttpsRedirectMiddleware(BaseHTTPMiddleware):
+    """强制 HTTPS 跳转（FORCE_HTTPS=1 时生效）。
+
+    通常由 Nginx/Caddy 层做跳转更高效；这里提供应用层兜底，
+    适合直接暴露应用端口或代理未配置跳转的场景。
+
+    健康检查路径豁免：容器 HEALTHCHECK 走的是容器内 http，
+    若被跳转会导致探针一直失败、容器被反复重启。
+    """
+
+    # 不需要跳转的路径前缀（探针必须豁免）
+    EXEMPT_PREFIXES = ("/api/health",)
+
+    async def dispatch(self, request: Request, call_next):
+        import os
+        if os.getenv("FORCE_HTTPS", "0") not in ("0", "false", "False"):
+            from utils.request_context import is_https_request
+            path = request.url.path
+            if not any(path.startswith(p) for p in self.EXEMPT_PREFIXES):
+                if not is_https_request(request):
+                    # 保留原始 host 与查询串，跳转到 https
+                    host = request.headers.get("host", "")
+                    url = request.url.replace(scheme="https", netloc=host)
+                    from starlette.responses import RedirectResponse
+                    return RedirectResponse(url=str(url), status_code=301)
+        return await call_next(request)

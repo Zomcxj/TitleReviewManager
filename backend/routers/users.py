@@ -121,9 +121,11 @@ async def change_password(data: PasswordChange, request: Request, db: Session = 
     })
     resp = JSONResponse(content={"message": "密码已修改，请使用新密码重新登录"})
     # 当前会话换发新 token，避免用户改密后立刻被踢出
+    from utils.request_context import cookie_extra_kwargs
     resp.set_cookie(
         key="access_token", value=new_token,
-        httponly=True, samesite="lax", max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        **cookie_extra_kwargs(),
     )
     return resp
 

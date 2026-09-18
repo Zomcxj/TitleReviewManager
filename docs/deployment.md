@@ -322,3 +322,77 @@ docker compose start backend
 - 建议在反向代理（Nginx/Caddy）上启用 HTTPS，并设置 `PUBLIC_URL` 为 https 地址
 - 数据库端口不要暴露到公网（compose 已默认不映射）
 - 定期检查 `/api/audit` 中的「登录失败」记录
+
+### 8. HTTPS 与反向代理
+
+生产环境务必走 HTTPS（内部系统的客户材料含身份证扫描件，明文传输不可接受）。
+
+#### Nginx 参考配置
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+    # 强制跳转 HTTPS
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    client_max_body_size 60M;   # 材料上传上限 50MB，留出余量
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        # 应用据此解析真实客户端 IP（限流/审计/告警都依赖它）
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+#### 对应的 .env 配置
+
+```bash
+TRUST_PROXY="1"      # 位于反代之后，采信 X-Forwarded-* 头
+COOKIE_SECURE="1"    # cookie 仅走 https 传输
+ENABLE_HSTS="1"      # 全站 HTTPS 确认可用后再开
+FORCE_HTTPS="1"      # 应用层兜底跳转（代理已跳转可不开）
+PUBLIC_URL="https://your-domain.com"
+```
+
+> **重要**：`TRUST_PROXY` 只在确实位于可信代理之后时才开。
+> 单机直连部署保持 `0` —— 否则客户端可伪造 `X-Forwarded-For`
+> 绕过登录限流与暴力破解检测。
+>
+> `COOKIE_SECURE=1` 后如果仍用 http 访问，浏览器不会发送 cookie，
+> 表现为"登录成功但立刻又跳回登录页"。切换 https 时再开这一项。
+
+### 9. 依赖漏洞扫描（CI）
+
+`.github/workflows/security.yml` 已配置，包含四个任务：
+
+| 任务 | 内容 |
+|------|------|
+| backend-security | `pip-audit` 扫依赖 CVE + `bandit` 静态安全分析 |
+| frontend-security | `npm audit`（high/critical 失败） |
+| backend-tests | 运行 pytest |
+| migration-check | 从零执行全部迁移并校验表完整性 |
+
+触发时机：push / PR 到 main、每周一自动扫描、可手动触发。
+
+本地手动跑：
+
+```bash
+cd backend
+pip install pip-audit bandit
+pip-audit -r requirements.txt --desc on
+bandit -r . -ll -x tests,alembic --skip B101,B603,B607
+```

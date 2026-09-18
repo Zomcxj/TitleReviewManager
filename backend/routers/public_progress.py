@@ -96,7 +96,8 @@ async def query_progress(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    client_ip = request.client.host if request.client else "unknown"
+    from utils.request_context import get_client_ip
+    client_ip = get_client_ip(request)
     # 限流走数据库（多 worker 共享计数）；复用登录尝试表，scope 区分
     check_ip_rate_limit(db, f"progress:{client_ip}", MAX_QUERIES_PER_WINDOW, RATE_WINDOW_SECONDS)
     record_attempt(db, f"progress:{client_ip}")

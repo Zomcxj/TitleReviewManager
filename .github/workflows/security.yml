@@ -1,0 +1,126 @@
+name: Security Scan
+
+# 依赖漏洞与配置检查。上线后依赖会持续暴露新 CVE，
+# 定期扫描比一次性审计更重要。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每周一 03:00 UTC 自动扫描（新 CVE 随时可能公布）
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  backend-security:
+    name: 后端依赖与代码扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pip-audit bandit
+
+      - name: 依赖漏洞扫描（pip-audit）
+        run: |
+          # 扫描已知 CVE；发现漏洞时失败并输出修复建议
+          pip-audit -r backend/requirements.txt --desc on
+
+      - name: 静态安全分析（bandit）
+        run: |
+          # 只报中高危；B101(assert) 与 B603/B607(subprocess) 属误报较多的项，逐条评估后豁免
+          bandit -r backend -ll -x backend/tests,backend/alembic \
+            --skip B101,B603,B607
+
+  frontend-security:
+    name: 前端依赖扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安装依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: npm audit
+        working-directory: frontend
+        run: |
+          # 只对 high/critical 失败，moderate 及以下仅提示
+          npm audit --audit-level=high
+
+  backend-tests:
+    name: 后端测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: 运行测试
+        working-directory: backend
+        env:
+          JWT_SECRET_KEY: ci-test-secret-key-not-for-production
+          SCHEDULER_ENABLED: "0"
+        run: pytest -q
+
+  migration-check:
+    name: 迁移可执行性检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: 从零执行全部迁移
+        working-directory: backend
+        env:
+          JWT_SECRET_KEY: ci-test-secret-key-not-for-production
+          DATABASE_URL: sqlite:///./ci_migration_check.db
+        run: |
+          # 验证迁移链完整：全新库能建出全部业务表
+          alembic upgrade head
+          python - <<'PY'
+          import sqlite3, sys
+          con = sqlite3.connect("ci_migration_check.db")
+          tables = {r[0] for r in con.execute(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+          expected = {"users", "customers", "applications", "materials", "reviews",
+                      "feedbacks", "operation_logs", "notifications", "follow_ups",
+                      "registration_tokens", "system_configs", "payment_records",
+                      "login_attempts", "account_locks"}
+          missing = expected - tables
+          if missing:
+              print(f"迁移缺失表: {missing}")
+              sys.exit(1)
+          print(f"迁移检查通过，共 {len(tables)} 张表")
+          PY
