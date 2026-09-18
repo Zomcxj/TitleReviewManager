@@ -265,3 +265,27 @@ class AccountLock(Base):
     failed_count = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class UserSession(Base):
+    """登录会话（每个设备/浏览器一条，用于会话管理与单设备下线）。
+
+    JWT 本身无状态，无法单独作废某个 token。这里为每次登录记录一条会话，
+    token 中携带 session_id，认证时校验该会话仍有效 —— 从而支持：
+    - 查看自己有哪些活跃设备
+    - 单独踢掉某一台设备（如手机丢失）
+    - 修改密码时只保留当前会话，其余全部失效
+    """
+    __tablename__ = "user_sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(64), unique=True, nullable=False, index=True, comment="会话标识（写入 token）")
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    ip_address = Column(String(50), nullable=True)
+    user_agent = Column(String(255), nullable=True, comment="原始 UA，用于识别设备")
+    device_label = Column(String(100), nullable=True, comment="解析后的设备描述，如 Chrome / Windows")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    last_seen_at = Column(DateTime, default=datetime.utcnow, comment="最近活跃时间")
+    expires_at = Column(DateTime, nullable=False, comment="过期时间（与 token 有效期一致）")
+    revoked_at = Column(DateTime, nullable=True, comment="被主动下线的时间；非空即失效")
+
+    user = relationship("User", foreign_keys=[user_id])

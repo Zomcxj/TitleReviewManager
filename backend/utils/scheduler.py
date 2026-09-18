@@ -99,17 +99,19 @@ def run_once() -> dict:
             result["errors"].append(f"{name}: {e}")
             logger.error(f"调度任务「{name}」执行失败: {e}", exc_info=True)
 
-    # 顺带清理过期登录尝试记录，避免表无限增长
+    # 顺带清理过期记录，避免表无限增长
     try:
         from database import SessionLocal
         from utils.login_guard import cleanup_old_attempts
+        from utils.session_manager import cleanup_expired_sessions
         db = SessionLocal()
         try:
             cleanup_old_attempts(db, older_than_hours=24)
+            cleanup_expired_sessions(db, older_than_days=30)
         finally:
             db.close()
     except Exception as e:
-        result["errors"].append(f"清理登录尝试: {e}")
+        result["errors"].append(f"清理过期记录: {e}")
 
     # 每日自动备份（数据库 + 材料文件）：仅当当前小时 == BACKUP_HOUR 且今天未备份过
     _maybe_run_backup(result)

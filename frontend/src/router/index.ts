@@ -31,6 +31,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'system-config', name: 'SystemConfig', component: () => import('../views/SystemConfig.vue'), meta: { roles: ['admin'] } },
       { path: 'recycle-bin', name: 'RecycleBin', component: () => import('../views/RecycleBin.vue'), meta: { roles: ['admin'] } },
       { path: 'backup', name: 'Backup', component: () => import('../views/Backup.vue'), meta: { roles: ['admin'] } },
+      { path: 'sessions', name: 'Sessions', component: () => import('../views/Sessions.vue') },
     ],
   },
   { path: '/:pathMatch(.*)*', name: 'NotFound', component: () => import('../views/NotFound.vue') },

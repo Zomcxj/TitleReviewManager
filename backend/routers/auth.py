@@ -107,10 +107,19 @@ async def login(req: LoginRequest, request: Request, db: Session = Depends(get_d
 
     # 5. Reset failed login counter on success
     reset_login_state(db, req.username)
+    # 创建会话记录，使该设备可被单独管理/下线
+    from utils.session_manager import create_session
+    session_id = create_session(
+        db=db, user_id=user.id,
+        ip_address=client_ip,
+        user_agent=request.headers.get("user-agent"),
+        expires_minutes=ACCESS_TOKEN_EXPIRE_MINUTES,
+    )
     token = create_access_token({
         "user_id": user.id, "id": user.id,
         "username": user.username, "role": user.role,
         "tv": user.token_version or 0,
+        "sid": session_id,
     })
     _write_login_log(
         db, user_id=user.id, username=user.username,
@@ -130,7 +139,19 @@ async def login(req: LoginRequest, request: Request, db: Session = Depends(get_d
 
 
 @router.post("/logout")
-async def logout():
+async def logout(request: Request, db: Session = Depends(get_db)):
+    """退出登录：撤销当前会话，使该 token 立即失效（而不仅是清 cookie）"""
+    try:
+        user_info = await get_current_user(request)
+        sid = user_info.get("sid")
+        uid = user_info.get("user_id") or user_info.get("id")
+        if sid and uid:
+            from utils.session_manager import revoke_session
+            revoke_session(db, uid, sid)
+            db.commit()
+    except Exception:
+        # 未登录或 token 已失效时，仍应正常返回并清 cookie
+        pass
     resp = JSONResponse(content={"message": "已退出"})
     resp.delete_cookie(key="access_token")
     return resp
@@ -203,3 +224,36 @@ async def get_lock_status(request: Request, db: Session = Depends(get_db)):
     if not username:
         return {"locked": False}
     return lock_status(db, username)
+
+
+@router.get("/sessions")
+async def list_my_sessions(request: Request, db: Session = Depends(get_db)):
+    """列出当前账号的活跃登录设备"""
+    user_info = await get_current_user(request)
+    from utils.session_manager import list_sessions
+    uid = user_info.get("user_id") or user_info.get("id")
+    items = list_sessions(db, uid, current_session_id=user_info.get("sid"))
+    return {"items": items, "total": len(items)}
+
+
+@router.delete("/sessions/{session_id}")
+async def revoke_my_session(session_id: str, request: Request, db: Session = Depends(get_db)):
+    """下线指定设备（只能操作自己的会话）"""
+    user_info = await get_current_user(request)
+    from utils.session_manager import revoke_session
+    uid = user_info.get("user_id") or user_info.get("id")
+    if not revoke_session(db, uid, session_id):
+        raise HTTPException(status_code=404, detail="会话不存在或已下线")
+    db.commit()
+    return {"message": "该设备已下线"}
+
+
+@router.post("/sessions/revoke-others")
+async def revoke_other_sessions(request: Request, db: Session = Depends(get_db)):
+    """下线除当前设备外的所有设备（怀疑账号被盗时使用）"""
+    user_info = await get_current_user(request)
+    from utils.session_manager import revoke_other_sessions as revoke_others
+    uid = user_info.get("user_id") or user_info.get("id")
+    count = revoke_others(db, uid, keep_session_id=user_info.get("sid"))
+    db.commit()
+    return {"message": f"已下线 {count} 台其他设备", "count": count}

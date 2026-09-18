@@ -134,9 +134,17 @@ async def get_current_user(request: Request) -> dict:
         # 兼容旧 token（无 tv 字段）：视为版本 0
         if (token_version or 0) != (user.token_version or 0):
             raise HTTPException(status_code=401, detail="登录状态已失效，请重新登录")
+        # 校验会话未被撤销/过期（支持按设备下线；旧 token 无 sid 时跳过）
+        from utils.session_manager import is_session_valid, touch_session
+        sid = payload.get("sid")
+        if not is_session_valid(db, sid, user.id):
+            raise HTTPException(status_code=401, detail="该设备已被下线，请重新登录")
+        touch_session(db, sid)
         # 以数据库为准回填角色，避免 token 中的旧角色被继续使用
         payload["role"] = user.role
         payload["username"] = user.username
+        # 显式带上会话标识，供 /auth/sessions 标记"当前设备"
+        payload["sid"] = sid
     finally:
         db.close()
 
