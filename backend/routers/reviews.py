@@ -65,6 +65,10 @@ async def create_review(
             content = await review_file.read()
             if len(content) > MAX_FILE_SIZE:
                 raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
+        from utils.upload_guard import validate_file_content
+        content_err = validate_file_content(review_file.filename, content)
+        if content_err:
+            raise HTTPException(status_code=400, detail=content_err)
         unique_name = f"review_{uuid.uuid4().hex}{ext}"
         app_dir = os.path.join(UPLOAD_DIR, str(application_id or "reviews"))
         os.makedirs(app_dir, exist_ok=True)

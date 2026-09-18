@@ -69,6 +69,10 @@ async def create_feedback(
             file_content = await attachment.read()
             if len(file_content) > MAX_FILE_SIZE:
                 raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
+        from utils.upload_guard import validate_file_content
+        content_err = validate_file_content(attachment.filename, file_content)
+        if content_err:
+            raise HTTPException(status_code=400, detail=content_err)
         unique_name = f"feedback_{uuid.uuid4().hex}{ext}"
         app_dir = os.path.join(UPLOAD_DIR, str(application_id))
         os.makedirs(app_dir, exist_ok=True)

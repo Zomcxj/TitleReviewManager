@@ -15,6 +15,9 @@ from utils.login_guard import (
 from utils.system_config import get_config
 from datetime import datetime
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
@@ -97,11 +100,17 @@ async def login(req: LoginRequest, request: Request, db: Session = Depends(get_d
             detail=f"IP: {client_ip}",
         )
         db.commit()
+        # 暴力破解检测：同一 IP 短时间内大量失败时通知管理员
+        _alert_brute_force(db, client_ip, req.username)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     # 5. Reset failed login counter on success
     reset_login_state(db, req.username)
-    token = create_access_token({"user_id": user.id, "id": user.id, "username": user.username, "role": user.role})
+    token = create_access_token({
+        "user_id": user.id, "id": user.id,
+        "username": user.username, "role": user.role,
+        "tv": user.token_version or 0,
+    })
     _write_login_log(
         db, user_id=user.id, username=user.username,
         action="登录成功", request=request, client_ip=client_ip,
@@ -129,6 +138,57 @@ async def get_me(request: Request, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     return UserResponse.model_validate(user)
+
+
+def _alert_brute_force(db: Session, client_ip: str, username: str) -> None:
+    """暴力破解检测：同一 IP 在窗口内失败次数超阈值时通知全部管理员。
+
+    仅在跨过阈值的**那一次**发通知（用 30 分钟去重窗口），避免每次失败都轰炸。
+    任何异常都吞掉，绝不能影响登录流程。
+    """
+    try:
+        from datetime import timedelta
+        from models import LoginAttempt, Notification
+        from routers.notifications import create_notification
+
+        window_minutes = 10
+        threshold = 20
+        since = datetime.utcnow() - timedelta(minutes=window_minutes)
+        # 统计该 IP 维度（含进度查询等复用同一表，用 key 前缀区分）
+        fails = db.query(LoginAttempt).filter(
+            LoginAttempt.scope == "ip",
+            LoginAttempt.key == client_ip,
+            LoginAttempt.attempted_at >= since,
+        ).count()
+        if fails < threshold:
+            return
+
+        # 去重：30 分钟内已告警过同一 IP 则跳过
+        dedup_since = datetime.utcnow() - timedelta(minutes=30)
+        recent = db.query(Notification).filter(
+            Notification.type == "security_alert",
+            Notification.created_at >= dedup_since,
+            Notification.content.like(f"%{client_ip}%"),
+        ).first()
+        if recent:
+            return
+
+        for admin in db.query(User).filter(User.role == "admin", User.is_deleted == False).all():
+            create_notification(
+                db=db,
+                user_id=admin.id,
+                title="安全告警：疑似暴力破解",
+                content=(
+                    f"IP {client_ip} 在 {window_minutes} 分钟内登录失败 {fails} 次"
+                    f"（最近尝试账号：{username}）。请检查是否需要封禁该来源。"
+                ),
+                type="security_alert",
+                related_type="auth",
+            )
+        db.commit()
+        logger.warning(f"暴力破解告警已发送: IP={client_ip}, 失败 {fails} 次")
+    except Exception as e:
+        logger.error(f"暴力破解告警发送失败: {e}")
 
 
 @router.get("/lock-status")

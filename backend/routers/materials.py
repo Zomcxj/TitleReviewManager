@@ -125,8 +125,17 @@ async def upload_material(
         if len(content) > max_bytes:
             raise HTTPException(status_code=400, detail=f"文件大小超过限制：{max_mb}MB")
 
+    # 内容校验：防止把其他格式改扩展名伪装成 pdf/图片上传
+    from utils.upload_guard import validate_file_content
+    content_err = validate_file_content(file.filename, content)
+    if content_err:
+        raise HTTPException(status_code=400, detail=content_err)
+
     rel = _get_customer_dir(customer)
-    stored_path = save_file(rel, category, file.filename, content)
+    # 落盘与入库统一使用净化后的文件名，避免把 ../ 之类的原始名写进数据库
+    from utils.upload_guard import safe_filename
+    clean_name = safe_filename(file.filename)
+    stored_path = save_file(rel, category, clean_name, content)
 
     # 版本号加行级锁，避免并发上传同类别材料时取到相同版本号
     # （SQLite 忽略 FOR UPDATE 但写事务本身串行；PostgreSQL 下真正阻塞并发事务）
@@ -142,7 +151,7 @@ async def upload_material(
     material = Material(
         application_id=application_id,
         category=category,
-        filename=file.filename,
+        filename=clean_name,
         file_path=stored_path,
         file_size=len(content),
         uploader_id=user.get("user_id") or user.get("id"),
@@ -156,7 +165,7 @@ async def upload_material(
         action="上传材料",
         resource_type="material",
         resource_id=material.id,
-        new_value={"detail": f"材料: {file.filename}, 类型: {category}, 路径: {stored_path}"},
+        new_value={"detail": f"材料: {clean_name}, 类型: {category}, 路径: {stored_path}"},
     )
     db.add(log)
     db.commit()

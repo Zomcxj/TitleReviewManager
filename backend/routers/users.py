@@ -1,9 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from models import User, Customer
 from schemas import UserResponse, UserCreate, UserUpdate, PasswordChange
-from auth import get_current_user, hash_password, verify_password
+from auth import (
+    get_current_user, hash_password, verify_password,
+    create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES,
+)
 from typing import List
 from datetime import datetime
 
@@ -108,8 +112,20 @@ async def change_password(data: PasswordChange, request: Request, db: Session = 
     # 改密成功后解除强制改密标记，并记录改密时间（供密码有效期策略使用）
     u.must_change_password = False
     u.password_changed_at = datetime.utcnow()
+    # 自增 token 版本：其他设备上的旧 token 立即失效（改密后必须重新登录）
+    u.token_version = (u.token_version or 0) + 1
     db.commit()
-    return {"message": "密码已修改"}
+    new_token = create_access_token({
+        "user_id": u.id, "id": u.id, "username": u.username,
+        "role": u.role, "tv": u.token_version,
+    })
+    resp = JSONResponse(content={"message": "密码已修改，请使用新密码重新登录"})
+    # 当前会话换发新 token，避免用户改密后立刻被踢出
+    resp.set_cookie(
+        key="access_token", value=new_token,
+        httponly=True, samesite="lax", max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    return resp
 
 
 @router.post("/{user_id}/reset-password")
@@ -134,5 +150,7 @@ async def reset_user_password(user_id: int, data: dict, request: Request, db: Se
     # 管理员重置的密码属于临时口令，要求该用户下次登录后自行修改
     target.must_change_password = True
     target.password_changed_at = datetime.utcnow()
+    # 使目标用户已登录的会话立即失效
+    target.token_version = (target.token_version or 0) + 1
     db.commit()
     return {"message": "密码已修改，该用户下次登录需自行修改密码"}

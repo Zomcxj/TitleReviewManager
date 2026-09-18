@@ -149,6 +149,23 @@
 - 敏感材料全程不出本域，不使用任何第三方在线预览服务
 - .doc 旧二进制格式不支持解析，引导下载
 
+### 安全加固
+- **安全响应头**：CSP（frame-ancestors 'none' 防点击劫持）、X-Frame-Options DENY、
+  X-Content-Type-Options nosniff、Referrer-Policy、Permissions-Policy；
+  生产启用 HTTPS 时可开 HSTS（`ENABLE_HSTS=1`）
+- **Token 撤销机制**：用户表带 `token_version`，改密 / 管理员重置密码 / 删除用户时自增，
+  已签发的旧 token **立即失效**（此前改密后旧 token 仍可用满 8 小时）；
+  每个请求回查数据库校验账号存在性、软删除状态与角色，token 中的旧角色不再被信任
+- **上传内容校验（魔数）**：除扩展名白名单外，校验真实文件头
+  （PDF `%PDF`、PNG/JPEG magic、OOXML `PK`、OLE 复合文档），
+  拦截把 HTML/脚本改名为 .pdf/.png 上传
+- **文件名安全**：去掉路径信息、阻断 `../` 与绝对路径穿越、限制长度，
+  落盘与入库统一使用净化后的名称（此前入库保留原始文件名）
+- **路径越界防护**：文件读取/删除前校验相对路径未越出存储根目录
+- **暴力破解告警**：同一 IP 10 分钟内登录失败 ≥20 次时通知全部管理员，
+  30 分钟内同一 IP 去重避免轰炸
+- 密码强度校验：拒绝常见弱口令、纯数字、纯字母，长度 ≥8
+
 ### 部署
 - Docker 容器化（`docker-compose.yml`）
 - 支持 SQLite（开发）/ PostgreSQL（生产）

@@ -33,6 +33,10 @@ class User(Base):
         comment="是否强制修改密码（种子账号/管理员重置后置位，登录后需先改密）",
     )
     password_changed_at = Column(DateTime, nullable=True, comment="最近一次修改密码时间")
+    token_version = Column(
+        Integer, default=0, nullable=False,
+        comment="token 版本；改密/重置/删除时自增，使已签发的旧 token 立即失效",
+    )
     created_at = Column(DateTime, default=datetime.utcnow)
     is_deleted = Column(Boolean, default=False, nullable=False, index=True, comment="软删除标记")
     deleted_at = Column(DateTime, nullable=True)

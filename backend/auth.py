@@ -96,6 +96,15 @@ def decode_access_token(token: str) -> Optional[dict]:
 
 
 async def get_current_user(request: Request) -> dict:
+    """解析并校验当前用户。
+
+    除签名与过期时间外，还回查数据库校验：
+    - 用户仍存在且未被软删除（此前删除用户后其 token 仍可用满 8 小时）
+    - token 中的版本号与用户当前 token_version 一致
+      （改密 / 管理员重置密码 / 删除用户后会自增，使旧 token 立即失效）
+
+    代价是每个请求一次主键查询（有索引），对内部管理系统可接受。
+    """
     token = request.cookies.get("access_token")
     if not token:
         auth_header = request.headers.get("Authorization", "")
@@ -106,7 +115,43 @@ async def get_current_user(request: Request) -> dict:
     payload = decode_access_token(token)
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # 回查数据库确认账号有效性与 token 版本。
+    # 注意：本函数在路由内被直接 await 调用（非 Depends），因此这里取的是
+    # database.SessionLocal；测试通过 conftest 把该工厂指向内存库。
+    uid = payload.get("user_id") or payload.get("id")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    from database import SessionLocal
+    from models import User
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == uid, User.is_deleted == False).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="账号不存在或已被删除")
+        token_version = payload.get("tv")
+        # 兼容旧 token（无 tv 字段）：视为版本 0
+        if (token_version or 0) != (user.token_version or 0):
+            raise HTTPException(status_code=401, detail="登录状态已失效，请重新登录")
+        # 以数据库为准回填角色，避免 token 中的旧角色被继续使用
+        payload["role"] = user.role
+        payload["username"] = user.username
+    finally:
+        db.close()
+
     return payload
+
+
+def bump_token_version(db, user_id: int) -> None:
+    """自增用户 token 版本，使其所有已签发的 token 立即失效。
+
+    调用时机：用户改密、管理员重置密码、删除用户、强制下线。
+    """
+    from models import User
+    user = db.query(User).filter(User.id == user_id).first()
+    if user:
+        user.token_version = (user.token_version or 0) + 1
 
 
 def require_role(*required_roles):

@@ -17,6 +17,10 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127
 app = FastAPI(title="职称服务内部管理平台", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+# 安全响应头（CSP / X-Frame-Options / nosniff 等），详见 utils/security_headers.py
+from utils.security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
+
 app.include_router(auth.router)
 app.include_router(customers.router)
 app.include_router(applications.router)

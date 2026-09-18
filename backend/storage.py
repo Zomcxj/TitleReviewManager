@@ -124,7 +124,11 @@ def save_file(customer_rel: str, category: str, filename: str, content: bytes) -
 
 
 def read_file(rel_path: str) -> Optional[bytes]:
-    """读取文件"""
+    """读取文件（拒绝越出存储根的相对路径）"""
+    from utils.upload_guard import is_safe_relative_path
+    if not is_safe_relative_path(rel_path):
+        logger.warning(f"拒绝越界路径读取: {rel_path}")
+        return None
     full = os.path.join(get_storage_root(), rel_path)
     if not os.path.exists(full):
         return None
@@ -133,7 +137,12 @@ def read_file(rel_path: str) -> Optional[bytes]:
 
 
 def delete_file(rel_path: str) -> bool:
-    """删除文件"""
+    """删除文件（拒绝越出存储根的相对路径）"""
+    from utils.upload_guard import is_safe_relative_path
+    if not is_safe_relative_path(rel_path):
+        logger.warning(f"拒绝越界路径删除: {rel_path}")
+        _log_file_action("DELETE_REJECTED", rel_path, "unsafe path")
+        return False
     full = os.path.join(get_storage_root(), rel_path)
     if os.path.exists(full):
         os.remove(full)
@@ -178,11 +187,9 @@ def list_files(customer_rel: str) -> List[Dict]:
 
 
 def _sanitize_filename(name: str) -> str:
-    """清理文件名中的非法字符"""
-    illegal = r'<>:"/\|?*'
-    for ch in illegal:
-        name = name.replace(ch, "_")
-    return name
+    """清理文件名：去掉路径信息、阻断目录穿越、限制长度（见 utils/upload_guard.safe_filename）"""
+    from utils.upload_guard import safe_filename
+    return safe_filename(name, fallback="file")
 
 
 # ---------- 拼音首字母工具（基于 GB2312 编码区间，常用汉字按拼音排序） ----------
