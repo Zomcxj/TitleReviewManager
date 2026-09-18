@@ -17,6 +17,13 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127
 app = FastAPI(title="职称服务内部管理平台", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+# 审计日志防篡改：注册哈希链钩子（任何 OperationLog 落库前自动计算链式哈希）
+try:
+    from utils.audit_chain import register_chain_hook
+    register_chain_hook()
+except Exception as _e:
+    logger.warning(f"审计哈希链钩子注册失败: {_e}")
+
 # 安全响应头（CSP / X-Frame-Options / nosniff 等），详见 utils/security_headers.py
 from utils.security_headers import SecurityHeadersMiddleware, HttpsRedirectMiddleware
 app.add_middleware(SecurityHeadersMiddleware)

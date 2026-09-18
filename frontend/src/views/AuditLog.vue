@@ -42,8 +42,31 @@
         <el-button type="success" :loading="exporting" @click="handleExport">
           <el-icon><Download /></el-icon> 导出 Excel
         </el-button>
+        <el-button type="warning" :loading="verifying" @click="handleVerifyChain">
+          <el-icon><Lock /></el-icon> 校验完整性
+        </el-button>
       </div>
     </div>
+
+    <el-alert
+      v-if="chainResult"
+      :type="chainResult.valid ? 'success' : 'error'"
+      :closable="true"
+      show-icon
+      class="chain-alert"
+      @close="chainResult = null"
+    >
+      <template #title>
+        {{ chainResult.valid ? '审计日志完整性校验通过' : '警告：审计日志可能被篡改' }}
+      </template>
+      <div class="chain-detail">
+        已校验 {{ chainResult.checked }} 条记录<template v-if="chainResult.unchained > 0">（其中 {{ chainResult.unchained }} 条为历史数据，未纳入校验）</template>
+        <div v-if="!chainResult.valid">
+          <p>原因：{{ chainResult.reason }}</p>
+          <p>异常记录 ID：{{ chainResult.broken_at.join('、') }}</p>
+        </div>
+      </div>
+    </el-alert>
 
     <el-table :data="logs" style="width: 100%" v-loading="loading">
       <el-table-column prop="id" label="ID" width="60" />
@@ -117,6 +140,8 @@ interface Log {
 
 const loading = ref(false)
 const exporting = ref(false)
+const verifying = ref(false)
+const chainResult = ref<any>(null)
 const logs = ref<Log[]>([])
 const filters = reactive({
   username: '',
@@ -185,6 +210,23 @@ function parseFilename(disposition: string | undefined): string {
   }
   const match = /filename="?([^";]+)"?/i.exec(disposition)
   return match ? match[1] : ''
+}
+
+async function handleVerifyChain() {
+  verifying.value = true
+  try {
+    const { data } = await api.get('/api/audit/verify-chain')
+    chainResult.value = data
+    if (data.valid) {
+      ElMessage.success(`完整性校验通过（${data.checked} 条记录）`)
+    } else {
+      ElMessage.error('检测到审计日志异常，请立即排查')
+    }
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '校验失败')
+  } finally {
+    verifying.value = false
+  }
 }
 
 async function handleExport() {
@@ -266,6 +308,17 @@ onMounted(fetchLogs)
 </script>
 
 <style scoped>
+.chain-alert {
+  margin-bottom: 16px;
+}
+.chain-detail {
+  font-size: 13px;
+  line-height: 1.8;
+}
+.chain-detail p {
+  margin: 4px 0 0;
+}
+
 .audit-log-page {
   padding: 20px;
 }

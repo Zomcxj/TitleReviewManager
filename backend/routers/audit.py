@@ -236,3 +236,51 @@ async def get_resource_logs(
     )
     
     return {"items": logs, "total": len(logs)}
+
+
+@router.get("/verify-chain")
+async def verify_audit_chain(
+    limit: int = Query(None, ge=1, le=100000, description="只校验最近 N 条，不传则全量"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """校验审计日志哈希链完整性（仅管理员）。
+
+    用于检测日志是否被篡改或删除：任何一条被改动都会导致后续链断裂。
+    返回 broken_at 列出校验失败的日志 id，便于定位。
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="只有管理员可以校验审计日志")
+
+    from utils.audit_chain import verify_chain
+    result = verify_chain(db, limit=limit)
+    if not result["valid"]:
+        # 篡改是严重事件，落一条审计（这条本身也在链上，攻击者改不掉历史）
+        db.add(OperationLog(
+            user_id=current_user.get("user_id") or current_user.get("id"),
+            username=current_user.get("username", ""),
+            action="审计日志链校验失败",
+            resource_type="audit",
+            new_value={"detail": result.get("reason"), "broken_at": result.get("broken_at")},
+        ))
+        db.commit()
+    return result
+
+
+@router.post("/backfill-chain")
+async def backfill_audit_chain(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """为历史日志补算哈希链（仅管理员，功能上线后一次性调用）。"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="只有管理员可以操作")
+
+    from utils.audit_chain import backfill_chain
+    total = 0
+    while True:
+        n = backfill_chain(db, batch_size=500)
+        total += n
+        if n == 0:
+            break
+    return {"message": f"已为 {total} 条历史日志补算哈希链", "count": total}

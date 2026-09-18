@@ -179,6 +179,11 @@ class OperationLog(Base):
     ip_address = Column(String(50), nullable=True)
     user_agent = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    # 防篡改哈希链：prev_hash 为前一条日志的 entry_hash，entry_hash 为
+    # 本条内容 + prev_hash 的 SHA-256。任何一条被改动/删除都会导致后续链断裂，
+    # 通过 verify_chain() 可检测。详见 utils/audit_chain.py
+    prev_hash = Column(String(64), nullable=True, comment="前一条日志的哈希")
+    entry_hash = Column(String(64), nullable=True, index=True, comment="本条日志的链式哈希")
 
     user = relationship("User", foreign_keys=[user_id])
 
