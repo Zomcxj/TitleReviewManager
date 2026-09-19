@@ -1,10 +1,9 @@
 from sqlalchemy import (
     UniqueConstraint,
-    Column, Integer, String, Text, DateTime, ForeignKey, Enum, Float, Boolean, JSON, Numeric
+    Column, Integer, String, Text, DateTime, ForeignKey, Boolean, JSON, Numeric
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
-import enum
 from database import Base
 from enums import ApplicationStatus, AuditStatus
 

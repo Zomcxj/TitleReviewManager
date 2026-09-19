@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import or_
 from database import get_db
-from models import Customer, Application, User, Material, OperationLog
+from models import Customer, Application, OperationLog
 from auth import get_current_user
 from utils.masking import mask_id_number, mask_phone
-from datetime import datetime, timezone
+from datetime import datetime
 import openpyxl
 import os
 import tempfile

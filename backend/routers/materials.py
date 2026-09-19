@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Material, Application, Customer, User, OperationLog
+from models import Material, Application, Customer, OperationLog
 from schemas import MaterialResponse
 from enums import MaterialCategory, AuditStatus
 from auth import get_current_user

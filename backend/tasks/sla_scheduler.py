@@ -7,8 +7,8 @@ SLA 时效管理定时任务
 """
 
 from database import get_db
-from models import Customer, User, Notification
-from sqlalchemy import func, or_
+from models import Customer, Notification
+from sqlalchemy import func
 from datetime import datetime, timezone, timedelta
 from routers.notifications import create_notification
 from utils.system_config import get_config

@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, extract
+from sqlalchemy import func
 from database import get_db
-from models import Customer, Application, User, FollowUp
+from models import Customer, Application, User
 from auth import get_current_user
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/api/dashboard", tags=["数据看板"])
 

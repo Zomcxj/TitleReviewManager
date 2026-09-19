@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Customer, User, Application, OperationLog
+from models import Customer, OperationLog
 from auth import get_current_user
 from storage import get_pinyin_initial
 import openpyxl

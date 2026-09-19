@@ -7,7 +7,7 @@
 4. 响应体只包含进度信息，绝不返回身份证号 / 手机号 / 工作单位等敏感字段。
 """
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field

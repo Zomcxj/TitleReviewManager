@@ -17,7 +17,7 @@ import logging
 import threading
 from email.mime.text import MIMEText
 from email.header import Header
-from typing import Optional, List
+from typing import Optional
 from urllib.request import Request as UrlRequest, urlopen
 
 logger = logging.getLogger(__name__)

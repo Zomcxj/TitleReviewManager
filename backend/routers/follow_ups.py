@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from database import get_db
@@ -21,7 +21,10 @@ async def get_customer_follow_ups(
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
-    
+    # 数据隔离：业务员只能查看自己名下客户的跟进记录
+    from utils.data_scope import assert_can_access_customer
+    assert_can_access_customer(current_user, customer)
+
     follow_ups = (
         db.query(FollowUp)
         .filter(FollowUp.customer_id == customer_id)

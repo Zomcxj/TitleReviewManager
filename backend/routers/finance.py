@@ -119,6 +119,9 @@ async def get_application_finance(
     current_user: dict = Depends(get_current_user),
 ):
     app = _get_application(db, application_id)
+    # 数据隔离：合同金额与回款属敏感经营数据，业务员仅能看自己名下客户
+    from utils.data_scope import assert_can_access_application
+    assert_can_access_application(db, current_user, application_id)
     return _serialize_finance(db, app)
 
 

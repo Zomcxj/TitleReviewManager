@@ -17,7 +17,7 @@ import time
 import logging
 import threading
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 

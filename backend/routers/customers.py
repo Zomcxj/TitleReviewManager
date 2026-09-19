@@ -5,11 +5,11 @@ from database import get_db
 from models import Customer, Application, User, Material, OperationLog
 from schemas import (
     CustomerCreate, CustomerUpdate, CustomerResponse,
-    ApplicationCreate, ApplicationResponse,
+    ApplicationResponse,
 )
 from auth import get_current_user, require_role
 from enums import CustomerSource
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import asyncio
 import logging
 import uuid

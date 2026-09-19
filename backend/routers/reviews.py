@@ -6,7 +6,6 @@ from models import Review, Material, Application, User, OperationLog
 from schemas import ReviewResponse
 from auth import get_current_user, require_role
 from enums import ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE
-from datetime import datetime
 import os
 import uuid
 from urllib.parse import quote
@@ -20,6 +19,9 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 @router.get("/application/{application_id}")
 async def get_application_reviews(application_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
+    # 数据隔离：业务员只能查看自己名下客户的审核记录
+    from utils.data_scope import assert_can_access_application
+    assert_can_access_application(db, user, application_id)
     reviews = db.query(Review).filter(Review.application_id == application_id).all()
     return [ReviewResponse.model_validate(r).model_dump() for r in reviews]
 
@@ -27,6 +29,9 @@ async def get_application_reviews(application_id: int, request: Request, db: Ses
 @router.get("/material/{material_id}")
 async def get_material_reviews(material_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
+    # 数据隔离：业务员只能查看自己名下客户材料的审核记录
+    from utils.data_scope import assert_can_access_material
+    assert_can_access_material(db, user, material_id)
     reviews = db.query(Review).filter(Review.material_id == material_id).all()
     return [ReviewResponse.model_validate(r).model_dump() for r in reviews]
 
@@ -304,6 +309,10 @@ async def download_review_attachment(
     review = db.query(Review).filter(Review.id == review_id).first()
     if not review or not review.review_file_path:
         raise HTTPException(status_code=404, detail="附件不存在")
+    # 数据隔离：审核附件可能含客户材料影像
+    if review.application_id:
+        from utils.data_scope import assert_can_access_application
+        assert_can_access_application(db, user, review.application_id)
     full_path = os.path.join(BASE_DIR, review.review_file_path)
     if not os.path.isfile(full_path):
         raise HTTPException(status_code=404, detail="附件文件不存在")

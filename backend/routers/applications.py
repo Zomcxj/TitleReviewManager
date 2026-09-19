@@ -60,20 +60,20 @@ async def get_material_checklist(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """材料清单完备性校验（登录用户可访问）。"""
-    await get_current_user(request)
-    app = db.query(Application).filter(Application.id == application_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="申报批次不存在")
+    """材料清单完备性校验。"""
+    user = await get_current_user(request)
+    # 数据隔离：材料清单会暴露客户材料构成，业务员仅限名下客户
+    from utils.data_scope import assert_can_access_application
+    app = assert_can_access_application(db, user, application_id)
     return build_material_checklist(db, app)
 
 
 @router.get("/{application_id}")
 async def get_application(application_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
-    app = db.query(Application).filter(Application.id == application_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="申报批次不存在")
+    # 数据隔离：业务员只能查看自己名下客户的批次
+    from utils.data_scope import assert_can_access_application
+    app = assert_can_access_application(db, user, application_id)
     return ApplicationResponse.model_validate(app).model_dump()
 
 

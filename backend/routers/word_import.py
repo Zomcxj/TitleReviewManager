@@ -2,13 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Customer, User, Application, OperationLog
+from models import Customer, Application, OperationLog
 from auth import get_current_user
 from storage import get_pinyin_initial
 import uuid
 from urllib.parse import quote
 from docx import Document
-from docx.shared import Pt, Cm, RGBColor
+from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from io import BytesIO

@@ -1,12 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from database import get_db
-from models import OperationLog, User
-from schemas import OperationLogResponse, OperationLogListResponse
-from datetime import datetime, timezone
+from models import OperationLog
+from schemas import OperationLogListResponse
+from datetime import datetime
 from typing import Optional
 from auth import get_current_user
 import json

@@ -12,7 +12,6 @@ from enums import (
     ApplicationStatus,
     VALID_TRANSITIONS,
 )
-from datetime import datetime
 import os
 import uuid
 from urllib.parse import quote
@@ -27,6 +26,9 @@ VALID_FEEDBACK_TYPES = [t.value for t in FeedbackType]
 @router.get("/application/{application_id}")
 async def get_application_feedbacks(application_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
+    # 数据隔离：机构反馈含评审意见，业务员仅能查看自己名下客户的
+    from utils.data_scope import assert_can_access_application
+    assert_can_access_application(db, user, application_id)
     feedbacks = db.query(Feedback).filter(Feedback.application_id == application_id).all()
     return [FeedbackResponse.model_validate(f).model_dump() for f in feedbacks]
 
@@ -122,6 +124,9 @@ async def download_feedback_attachment(
     feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
     if not feedback or not feedback.attachment_path:
         raise HTTPException(status_code=404, detail="附件不存在")
+    # 数据隔离：机构反馈附件按客户归属校验
+    from utils.data_scope import assert_can_access_application
+    assert_can_access_application(db, user, feedback.application_id)
     full_path = os.path.join(BASE_DIR, feedback.attachment_path)
     if not os.path.isfile(full_path):
         raise HTTPException(status_code=404, detail="附件文件不存在")
@@ -141,6 +146,8 @@ async def download_feedback_attachment(
 @router.get("/application/{application_id}/logs")
 async def get_operation_logs(application_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
+    from utils.data_scope import assert_can_access_application
+    assert_can_access_application(db, user, application_id)
     from models import User as UserModel
     logs = db.query(OperationLog).filter(
         OperationLog.resource_type == "application",

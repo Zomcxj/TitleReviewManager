@@ -3,9 +3,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from database import get_db
 from models import Notification, User
-from schemas import NotificationResponse, NotificationListResponse
+from schemas import NotificationListResponse
 from auth import get_current_user
-from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/notifications", tags=["消息通知"])
 
