@@ -99,6 +99,14 @@ def run_once() -> dict:
             result["errors"].append(f"{name}: {e}")
             logger.error(f"调度任务「{name}」执行失败: {e}", exc_info=True)
 
+    try:
+        from utils.reminders import send_operational_reminders
+        reminder_stats = send_operational_reminders()
+        result["reminders"] = reminder_stats
+    except Exception as e:
+        result["errors"].append(f"运营催办: {e}")
+        logger.error(f"调度任务「运营催办」执行失败: {e}", exc_info=True)
+
     # 顺带清理过期记录，避免表无限增长
     try:
         from database import SessionLocal

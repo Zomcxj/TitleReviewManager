@@ -156,6 +156,16 @@ async def get_rejection_stats_endpoint(
     return get_rejection_stats(db, days=days, salesman_id=salesman_id)
 
 
+@router.get("/workbench")
+async def get_workbench_endpoint(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """今日待办：跟进、内部审核、申报截止、待收款（按角色过滤）。"""
+    from utils.workbench import get_workbench
+    return get_workbench(db, current_user)
+
+
 @router.get("/funnel")
 async def get_conversion_funnel(
     days: int = Query(180, ge=1, le=3650, description="统计最近多少天"),

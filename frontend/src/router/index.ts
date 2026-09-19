@@ -20,6 +20,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue') },
       { path: 'customers', name: 'CustomerList', component: () => import('../views/CustomerList.vue') },
       { path: 'follow-ups', name: 'FollowUpSchedule', component: () => import('../views/FollowUpSchedule.vue') },
+      { path: 'guide', name: 'Guide', component: () => import('../views/Guide.vue') },
       { path: 'customers/:id', name: 'CustomerDetail', component: () => import('../views/CustomerDetail.vue') },
       { path: 'reviews', name: 'ReviewWorkspace', component: () => import('../views/ReviewWorkspace.vue'), meta: { roles: ['admin', 'reviewer'] } },
       { path: 'registration-links', name: 'RegistrationLinks', component: () => import('../views/RegistrationLinks.vue'), meta: { roles: ['admin', 'salesman'] } },

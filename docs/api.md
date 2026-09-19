@@ -44,6 +44,7 @@
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
+| `/api/reviews/pending` | GET | 内部待审核队列（按待审材料与审核 SLA 排序；`?status=完成资料` 筛选）|
 | `/api/reviews/application/{app_id}` | GET | 申报审核记录 |
 | `/api/reviews/material/{mat_id}` | GET | 材料审核记录 |
 | `/api/reviews/` | POST | 单份审核（reviewer/admin） |

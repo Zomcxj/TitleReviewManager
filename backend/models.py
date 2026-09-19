@@ -83,9 +83,13 @@ class Application(Base):
     submitted_at = Column(DateTime)
     institution_name = Column(String(200))
     assigned_reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    review_sla_deadline = Column(
+        DateTime, nullable=True, index=True,
+        comment="内部审核 SLA 截止时间（进入完成资料时写入，离开待审状态时清空）",
+    )
     # 申报周期
     cycle_year = Column(Integer, nullable=True, index=True, comment="申报年度")
-    cycle_deadline = Column(DateTime, nullable=True, comment="该批次申报截止时间")
+    cycle_deadline = Column(DateTime, nullable=True, index=True, comment="该批次申报截止时间")
     # 收费/合同
     contract_no = Column(String(64), nullable=True, index=True, comment="合同编号")
     contract_signed_at = Column(DateTime, nullable=True, comment="合同签订时间")

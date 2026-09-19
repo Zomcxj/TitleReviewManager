@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from database import get_db
@@ -6,6 +6,7 @@ from models import Review, Material, Application, User, OperationLog
 from schemas import ReviewResponse
 from auth import get_current_user, require_role
 from enums import ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE
+from typing import Optional
 import os
 import uuid
 from urllib.parse import quote
@@ -14,6 +15,17 @@ from routers.notifications import create_notification
 router = APIRouter(prefix="/api/reviews", tags=["审核"])
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+
+
+@router.get("/pending")
+async def list_pending_reviews(
+    status: Optional[str] = Query(None, description="完成资料 / 资料补充 / 二次申报"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """内部待审核队列（按待审材料与审核 SLA 排序）。"""
+    from utils.workbench import list_pending_reviews as _list
+    return _list(db, current_user, status=status, limit=200)
 
 
 @router.get("/application/{application_id}")
@@ -214,6 +226,8 @@ async def batch_review(
             )
             db.add(r)
         app.status = "完成资料"
+        from utils.workbench import clear_review_sla
+        clear_review_sla(app)
         log = OperationLog(
             user_id=user.get("user_id") or user.get("id"),
             username=user.get("username", ""),

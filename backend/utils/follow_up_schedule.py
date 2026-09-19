@@ -88,10 +88,14 @@ def get_pending_follow_ups(
     items = []
     for fu, customer in rows:
         due = _naive(fu.next_follow_up_at)
+        phone = customer.phone
+        from utils.masking import should_mask_customer, mask_phone
+        if should_mask_customer(user, customer):
+            phone = mask_phone(phone)
         items.append({
             "customer_id": customer.id,
             "customer_name": customer.name,
-            "phone": customer.phone,
+            "phone": phone,
             "assigned_salesman_id": customer.assigned_salesman_id,
             "follow_up_id": fu.id,
             "follow_up_type": fu.follow_up_type,

@@ -18,7 +18,7 @@
           </div>
         </div>
         
-        <el-menu :default-active="activeMenu" :collapse="sidebarCollapsed" :collapse-transition="false" class="nav-menu" @select="handleMenuSelect">
+        <el-menu ref="menuRef" :default-active="activeMenu" :collapse="sidebarCollapsed" :collapse-transition="false" class="nav-menu" popper-class="nav-sub-popper" @select="handleMenuSelect">
           <el-menu-item index="/admin/dashboard" class="nav-item">
             <el-icon><DataBoard /></el-icon>
             <span>工作台</span>
@@ -41,51 +41,73 @@
             <el-icon><Grid /></el-icon>
             <span>公海池</span>
           </el-menu-item>
-          <el-menu-item v-if="authStore.isSalesman || authStore.isAdmin" index="/admin/registration-links" class="nav-item">
-            <el-icon><Link /></el-icon>
-            <span>注册链接</span>
-          </el-menu-item>
           <el-menu-item v-if="authStore.isReviewer || authStore.isAdmin" index="/admin/reviews" class="nav-item">
             <el-icon><DocumentChecked /></el-icon>
             <span>审核工作台</span>
-          </el-menu-item>
-          <el-menu-item v-if="authStore.isAdmin" index="/admin/users" class="nav-item">
-            <el-icon><User /></el-icon>
-            <span>用户管理</span>
-          </el-menu-item>
-          <el-menu-item v-if="authStore.isAdmin" index="/admin/audit-logs" class="nav-item">
-            <el-icon><List /></el-icon>
-            <span>审计日志</span>
-          </el-menu-item>
-          <el-menu-item v-if="authStore.isSalesman || authStore.isAdmin" index="/admin/import" class="nav-item">
-            <el-icon><Upload /></el-icon>
-            <span>批量导入</span>
-          </el-menu-item>
-          <el-menu-item v-if="authStore.isAdmin" index="/admin/transfer" class="nav-item">
-            <el-icon><Switch /></el-icon>
-            <span>客户转让</span>
           </el-menu-item>
           <el-menu-item v-if="authStore.isSalesman || authStore.isAdmin" index="/admin/finance" class="nav-item">
             <el-icon><Money /></el-icon>
             <span>收费管理</span>
           </el-menu-item>
-          <el-menu-item v-if="authStore.isAdmin" index="/admin/system-config" class="nav-item">
-            <el-icon><Setting /></el-icon>
-            <span>系统配置</span>
+          <el-menu-item index="/admin/guide" class="nav-item">
+            <el-icon><Reading /></el-icon>
+            <span>使用教程</span>
           </el-menu-item>
-          <el-menu-item v-if="authStore.isAdmin" index="/admin/recycle-bin" class="nav-item">
-            <el-icon><Delete /></el-icon>
-            <span>回收站</span>
-          </el-menu-item>
-          <el-menu-item v-if="authStore.isAdmin" index="/admin/backup" class="nav-item">
-            <el-icon><Download /></el-icon>
-            <span>数据备份</span>
-          </el-menu-item>
-          <el-menu-item v-if="authStore.isAdmin" index="/admin/client-errors" class="nav-item">
-            <el-icon><Warning /></el-icon>
-            <span>前端错误</span>
-          </el-menu-item>
-          <el-menu-item index="/admin/sessions" class="nav-item">
+
+          <el-sub-menu v-if="authStore.isSalesman || authStore.isAdmin" index="ops-tools" class="nav-group">
+            <template #title>
+              <el-icon><Suitcase /></el-icon>
+              <span>运营工具</span>
+            </template>
+            <el-menu-item index="/admin/registration-links" class="nav-item">
+              <el-icon><Link /></el-icon>
+              <span>注册链接</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/import" class="nav-item">
+              <el-icon><Upload /></el-icon>
+              <span>批量导入</span>
+            </el-menu-item>
+          </el-sub-menu>
+
+          <el-sub-menu v-if="authStore.isAdmin" index="system-mgmt" class="nav-group">
+            <template #title>
+              <el-icon><Setting /></el-icon>
+              <span>系统管理</span>
+            </template>
+            <el-menu-item index="/admin/users" class="nav-item">
+              <el-icon><User /></el-icon>
+              <span>用户管理</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/transfer" class="nav-item">
+              <el-icon><Switch /></el-icon>
+              <span>客户转让</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/audit-logs" class="nav-item">
+              <el-icon><List /></el-icon>
+              <span>审计日志</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/system-config" class="nav-item">
+              <el-icon><Operation /></el-icon>
+              <span>系统配置</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/recycle-bin" class="nav-item">
+              <el-icon><Delete /></el-icon>
+              <span>回收站</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/backup" class="nav-item">
+              <el-icon><Download /></el-icon>
+              <span>数据备份</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/client-errors" class="nav-item">
+              <el-icon><Warning /></el-icon>
+              <span>前端错误</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/sessions" class="nav-item">
+              <el-icon><Monitor /></el-icon>
+              <span>登录设备</span>
+            </el-menu-item>
+          </el-sub-menu>
+          <el-menu-item v-else index="/admin/sessions" class="nav-item">
             <el-icon><Monitor /></el-icon>
             <span>登录设备</span>
           </el-menu-item>
@@ -149,7 +171,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage } from 'element-plus'
@@ -167,17 +189,38 @@ import {
   Grid,
   Money,
   Setting,
+  Operation,
   Delete,
   Download,
   Monitor,
   Warning,
   AlarmClock,
+  Suitcase,
+  Reading,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const sidebarCollapsed = ref(false)
+const menuRef = ref()
+
+/** 折叠组归属路由：进入组内路由时自动展开，离开时收起 */
+const OPS_TOOL_PATHS = ['/admin/registration-links', '/admin/import']
+const SYSTEM_PATHS = [
+  '/admin/users', '/admin/transfer', '/admin/audit-logs', '/admin/system-config',
+  '/admin/recycle-bin', '/admin/backup', '/admin/client-errors', '/admin/sessions',
+]
+
+watch(() => route.path, (path) => {
+  nextTick(() => {
+    if (sidebarCollapsed.value) return
+    if (OPS_TOOL_PATHS.some((p) => path.startsWith(p))) menuRef.value?.open('ops-tools')
+    else menuRef.value?.close('ops-tools')
+    if (SYSTEM_PATHS.some((p) => path.startsWith(p))) menuRef.value?.open('system-mgmt')
+    else menuRef.value?.close('system-mgmt')
+  })
+}, { immediate: true })
 
 /** 逾期未跟进数量，用于菜单角标（>0 才展示） */
 const overdueCount = ref(0)
@@ -216,6 +259,7 @@ const pageTitle = computed(() => {
     '/admin/import': '批量导入',
     '/admin/transfer': '客户转让',
     '/admin/finance': '收费与证书管理',
+    '/admin/guide': '功能教程',
     '/admin/system-config': '系统配置',
     '/admin/recycle-bin': '回收站',
     '/admin/backup': '数据备份',
@@ -318,6 +362,17 @@ function handleMenuSelect(index: string) {
   flex: 1;
   padding: 12px 8px;
   overflow-y: auto;
+  --el-menu-bg-color: transparent;
+}
+
+/* 折叠组内子菜单容器与子项：保持深色透明底（Element 默认白底会漏出来） */
+.nav-menu :deep(.el-sub-menu .el-menu),
+.nav-menu :deep(.el-sub-menu .el-menu--inline) {
+  background: transparent;
+}
+
+.nav-menu :deep(.el-sub-menu .el-menu .nav-item) {
+  background: transparent;
 }
 
 .nav-menu .nav-item {
@@ -370,6 +425,42 @@ function handleMenuSelect(index: string) {
   line-height: 1;
 }
 
+/* 折叠组标题：几何尺寸与常驻菜单项完全一致，仅靠间距区分分组 */
+.nav-menu :deep(.el-sub-menu.nav-group .el-sub-menu__title) {
+  color: #94a3b8;
+  margin: 2px 0;
+  border-radius: 8px;
+  height: 44px;
+  line-height: 44px;
+  padding: 0 20px;
+  font-size: 14px;
+  font-weight: 450;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+}
+
+.nav-menu :deep(.el-sub-menu.nav-group .el-sub-menu__title .el-icon) {
+  margin-right: 12px;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+}
+
+.nav-menu :deep(.el-sub-menu.nav-group .el-sub-menu__title:hover) {
+  background: rgba(99, 102, 241, 0.1);
+  color: #e2e8f0;
+}
+
+.nav-menu :deep(.el-sub-menu.nav-group .el-sub-menu__title .el-sub-menu__icon-arrow) {
+  color: #64748b;
+  margin-left: auto;
+}
+
+.nav-menu :deep(.el-sub-menu.nav-group .nav-item) {
+  padding-left: 50px;
+}
+
 /* 独立徽标（无默认插槽）：改为静态定位，跟在文字右侧 */
 .nav-menu .nav-item .nav-badge :deep(.el-badge__content) {
   position: static;
@@ -397,6 +488,24 @@ function handleMenuSelect(index: string) {
   justify-content: center;
   display: flex;
   align-items: center;
+}
+
+/* 折叠态：折叠组标题与普通项同样居中（Element 默认 padding 会让组图标偏位） */
+.sidebar :deep(.el-menu--collapse) .nav-group .el-sub-menu__title {
+  padding: 0;
+  margin-top: 2px;
+  justify-content: center;
+  display: flex;
+  align-items: center;
+}
+
+.sidebar :deep(.el-menu--collapse) .nav-group .el-sub-menu__title .el-icon {
+  margin-right: 0;
+}
+
+/* 折叠态隐藏组箭头：只留图标，避免与菜单图标重叠 */
+.sidebar :deep(.el-menu--collapse) .nav-group .el-sub-menu__title .el-sub-menu__icon-arrow {
+  display: none;
 }
 
 .sidebar :deep(.el-menu--collapse) .nav-item .el-icon {
@@ -574,5 +683,51 @@ function handleMenuSelect(index: string) {
   .main-content {
     padding: 16px;
   }
+}
+</style>
+
+<style>
+/* 折叠态弹出子菜单（teleport 到 body，scoped 样式覆盖不到，需全局样式） */
+.nav-sub-popper.el-popper {
+  background: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 6px;
+}
+
+.nav-sub-popper .el-menu {
+  background: transparent;
+}
+
+.nav-sub-popper .el-menu-item,
+.nav-sub-popper .el-sub-menu__title {
+  color: #94a3b8;
+  border-radius: 8px;
+  height: 40px;
+  line-height: 40px;
+  font-size: 14px;
+  margin: 2px 0;
+}
+
+.nav-sub-popper .el-menu-item .el-icon,
+.nav-sub-popper .el-sub-menu__title .el-icon {
+  margin-right: 10px;
+  color: #64748b;
+}
+
+.nav-sub-popper .el-menu-item:hover,
+.nav-sub-popper .el-sub-menu__title:hover {
+  background: rgba(99, 102, 241, 0.15);
+  color: #e2e8f0;
+}
+
+.nav-sub-popper .el-menu-item.is-active {
+  background: rgba(99, 102, 241, 0.25);
+  color: #f1f5f9;
+}
+
+.nav-sub-popper .el-popper__arrow::before {
+  background: #0f172a;
+  border-color: rgba(255, 255, 255, 0.1);
 }
 </style>

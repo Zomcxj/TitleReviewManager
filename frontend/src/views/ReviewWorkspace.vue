@@ -3,7 +3,7 @@
     <div class="review-top">
       <div class="review-top-left">
         <h3 class="section-title">审核工作台</h3>
-        <p class="section-desc">选择申报批次，逐项审核材料，支持批量通过或退回标记问题</p>
+        <p class="section-desc">按审核时效排序的待审队列，只显示仍有待审核材料的批次</p>
       </div>
       <div class="review-filters">
         <el-select v-model="filterStatus" placeholder="全部状态" clearable style="width: 140px" @change="loadPendingApps">
@@ -24,17 +24,21 @@
               <el-badge :value="pendingApps.length" :max="99" class="count-badge" />
             </div>
           </template>
-          <div v-for="app in pendingApps" :key="app.id || app.application_id" class="app-row"
-            :class="{ active: selectedApp?.id === app.id || selectedApp?.application_id === app.application_id }"
+          <div v-for="app in pendingApps" :key="app.application_id" class="app-row"
+            :class="{ active: selectedApp?.application_id === app.application_id, overdue: app.overdue }"
             @click="selectApp(app)">
             <div class="app-row-main">
-              <div class="app-avatar">{{ app.name?.charAt(0) || '?' }}</div>
+              <div class="app-avatar">{{ app.customer_name?.charAt(0) || '?' }}</div>
               <div class="app-row-info">
-                <div class="app-row-name">{{ app.name }}</div>
-                <div class="app-row-meta">{{ app.batch_number || app.batch }} · {{ app.materials_count || 0 }} 份材料</div>
+                <div class="app-row-name">{{ app.customer_name }}</div>
+                <div class="app-row-meta">
+                  {{ app.batch_number || '-' }} · {{ app.pending_materials || 0 }} 份待审
+                  <span v-if="app.overdue" class="sla-overdue">超时 {{ formatHours(app.overdue_hours) }}</span>
+                  <span v-else-if="app.hours_remaining != null" class="sla-remain">剩余 {{ formatHours(app.hours_remaining) }}</span>
+                </div>
               </div>
-              <el-tag :type="statusType(app.current_status || app.status)" size="small" round>
-                {{ app.current_status || app.status }}
+              <el-tag :type="statusType(app.status)" size="small" round>
+                {{ app.status }}
               </el-tag>
             </div>
           </div>
@@ -47,8 +51,8 @@
           <template #header>
             <div class="review-header">
               <div class="review-title">
-                <span class="review-name">{{ selectedApp.name }}</span>
-                <span class="review-batch">{{ selectedApp.batch_number || selectedApp.batch }}</span>
+                <span class="review-name">{{ selectedApp.customer_name }}</span>
+                <span class="review-batch">{{ selectedApp.batch_number }}</span>
               </div>
               <div v-if="materials.length" class="review-actions">
                 <span class="review-hint">逐项审核：通过或退回每份材料</span>
@@ -171,17 +175,24 @@ function formatDate(d: string) {
   return new Date(d).toLocaleString('zh-CN')
 }
 
+function formatHours(hours: number | null | undefined) {
+  if (hours == null) return '-'
+  const abs = Math.abs(Number(hours))
+  if (abs < 1) return `${Math.round(abs * 60)} 分钟`
+  if (abs < 48) return `${Math.round(abs)} 小时`
+  return `${Math.round(abs / 24)} 天`
+}
+
 async function loadPendingApps() {
   loadingList.value = true
   try {
-    const { data } = await api.get('/api/customers/', { params: { page: 1, page_size: 100 } })
-    let items = (data.items || []).filter((item: any) =>
-      ['完成资料', '资料补充', '二次申报'].includes(item.current_status)
-    )
-    if (filterStatus.value) {
-      items = items.filter((item: any) => item.current_status === filterStatus.value)
-    }
-    pendingApps.value = items
+    const { data } = await api.get('/api/reviews/pending', {
+      params: filterStatus.value ? { status: filterStatus.value } : {},
+    })
+    pendingApps.value = data.items || []
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.detail || '加载待审核列表失败')
+    pendingApps.value = []
   } finally {
     loadingList.value = false
   }
@@ -189,12 +200,11 @@ async function loadPendingApps() {
 
 async function selectApp(app: any) {
   selectedApp.value = app
-  const appId = app.application_id || app.id
+  const appId = app.application_id
   loadingMaterials.value = true
   try {
     const { data } = await api.get(`/api/applications/${appId}/materials/`)
     const allMats = data.items || data
-    // 只显示待审核的材料（已通过/已退回的不显示）
     materials.value = (Array.isArray(allMats) ? allMats : []).filter(
       (m: any) => !m.audit_status || m.audit_status === '待审核' || m.audit_status === ''
     )
@@ -206,7 +216,7 @@ async function selectApp(app: any) {
 }
 
 function downloadFile(materialId: number) {
-  const appId = selectedApp.value?.application_id || selectedApp.value?.id
+  const appId = selectedApp.value?.application_id
   window.open(`/api/applications/${appId}/materials/file/${materialId}`, '_blank')
 }
 
@@ -217,7 +227,7 @@ function showReviewDialog(material: any) {
 }
 
 async function handleSingleApprove(material: any) {
-  const appId = selectedApp.value.application_id || selectedApp.value.id
+  const appId = selectedApp.value.application_id
   try {
     const formData = new FormData()
     formData.append('material_id', String(material.id))
@@ -226,13 +236,9 @@ async function handleSingleApprove(material: any) {
     formData.append('description', '审核通过')
     await api.post('/api/reviews/', formData)
     ElMessage.success('已通过')
-    // 从材料列表移除
     materials.value = materials.value.filter((m: any) => m.id !== material.id)
-    // 如果没有材料了，从待审核列表移除
     if (!materials.value.length) {
-      pendingApps.value = pendingApps.value.filter(
-        (app: any) => (app.id || app.application_id) !== appId
-      )
+      pendingApps.value = pendingApps.value.filter((app: any) => app.application_id !== appId)
       selectedApp.value = null
     }
   } catch (e: any) {
@@ -253,7 +259,7 @@ async function submitReview() {
   }
   const formData = new FormData()
   formData.append('material_id', String(currentMaterial.value.id))
-  const appId = selectedApp.value.application_id || selectedApp.value.id
+  const appId = selectedApp.value.application_id
   formData.append('application_id', String(appId))
   formData.append('result', '退回')
   formData.append('issue_type', reviewForm.value.issue_type || '内容问题')
@@ -262,13 +268,9 @@ async function submitReview() {
     await api.post('/api/reviews/', formData)
     ElMessage.success('已退回')
     reviewDialogVisible.value = false
-    // 从材料列表移除
     materials.value = materials.value.filter((m: any) => m.id !== currentMaterial.value.id)
-    // 如果没有材料了，从待审核列表移除
     if (!materials.value.length) {
-      pendingApps.value = pendingApps.value.filter(
-        (app: any) => (app.id || app.application_id) !== appId
-      )
+      pendingApps.value = pendingApps.value.filter((app: any) => app.application_id !== appId)
       selectedApp.value = null
     }
   } catch (e: any) {
@@ -351,6 +353,22 @@ onMounted(async () => {
 .app-row.active {
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(139, 92, 246, 0.08));
   border-color: rgba(99, 102, 241, 0.3);
+}
+
+.app-row.overdue {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.sla-overdue {
+  color: #ef4444;
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+.sla-remain {
+  color: #64748b;
+  margin-left: 6px;
 }
 
 .app-row-main {

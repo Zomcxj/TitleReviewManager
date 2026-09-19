@@ -62,6 +62,94 @@
         <div class="stat-trend up">较上周</div>
       </div>
     </div>
+
+    <!-- 今日待办 -->
+    <div class="card workbench-card" v-loading="workbenchLoading">
+      <div class="card-header">
+        <h3>今日待办</h3>
+        <span class="card-hint">按角色过滤，点条目可跳转处理</span>
+      </div>
+      <div class="workbench-metrics">
+        <div class="wb-metric" :class="{ danger: (workbench.summary?.follow_ups_overdue || 0) > 0 }" @click="go('/admin/follow-ups')">
+          <div class="wb-value">{{ workbench.summary?.follow_ups_overdue || 0 }}</div>
+          <div class="wb-label">跟进逾期</div>
+        </div>
+        <div class="wb-metric" @click="go('/admin/follow-ups')">
+          <div class="wb-value">{{ workbench.summary?.follow_ups_today || 0 }}</div>
+          <div class="wb-label">今天待跟进</div>
+        </div>
+        <div
+          class="wb-metric"
+          :class="{ danger: (workbench.summary?.overdue_reviews || 0) > 0 }"
+          @click="go(authStore.isReviewer || authStore.isAdmin ? '/admin/reviews' : '/admin/customers')"
+        >
+          <div class="wb-value">{{ workbench.summary?.pending_reviews || 0 }}</div>
+          <div class="wb-label">待审核批次</div>
+        </div>
+        <div class="wb-metric" :class="{ danger: (workbench.summary?.overdue_deadlines || 0) > 0 }" @click="go('/admin/customers')">
+          <div class="wb-value">{{ workbench.summary?.overdue_deadlines || 0 }}</div>
+          <div class="wb-label">申报已截止</div>
+        </div>
+        <div
+          v-if="!authStore.isReviewer"
+          class="wb-metric"
+          @click="go('/admin/finance')"
+        >
+          <div class="wb-value">{{ workbench.summary?.pending_payments || 0 }}</div>
+          <div class="wb-label">待收款</div>
+        </div>
+      </div>
+      <div class="workbench-lists">
+        <div class="wb-list">
+          <div class="wb-list-title">跟进</div>
+          <div v-if="workbench.follow_ups?.length" class="wb-items">
+            <div
+              v-for="item in workbench.follow_ups.slice(0, 5)"
+              :key="'fu-' + item.follow_up_id"
+              class="wb-item"
+              @click="go(`/admin/customers/${item.customer_id}`)"
+            >
+              <span class="wb-name">{{ item.customer_name }}</span>
+              <el-tag v-if="item.overdue" type="danger" size="small" effect="plain">逾期 {{ item.overdue_days }} 天</el-tag>
+              <span v-else class="wb-meta">{{ formatShort(item.next_follow_up_at) }}</span>
+            </div>
+          </div>
+          <div v-else class="wb-empty">暂无待跟进</div>
+        </div>
+        <div class="wb-list">
+          <div class="wb-list-title">审核积压</div>
+          <div v-if="workbench.reviews?.length" class="wb-items">
+            <div
+              v-for="item in workbench.reviews.slice(0, 5)"
+              :key="'rv-' + item.application_id"
+              class="wb-item"
+              @click="go(authStore.isReviewer || authStore.isAdmin ? '/admin/reviews' : `/admin/customers/${item.customer_id}`)"
+            >
+              <span class="wb-name">{{ item.customer_name }}</span>
+              <el-tag v-if="item.overdue" type="danger" size="small" effect="plain">超时</el-tag>
+              <span class="wb-meta">{{ item.pending_materials }} 份待审</span>
+            </div>
+          </div>
+          <div v-else class="wb-empty">暂无待审材料</div>
+        </div>
+        <div class="wb-list">
+          <div class="wb-list-title">申报截止</div>
+          <div v-if="workbench.deadlines?.length" class="wb-items">
+            <div
+              v-for="item in workbench.deadlines.slice(0, 5)"
+              :key="'dl-' + item.application_id"
+              class="wb-item"
+              @click="go(`/admin/customers/${item.customer_id}`)"
+            >
+              <span class="wb-name">{{ item.customer_name }}</span>
+              <el-tag v-if="item.overdue" type="danger" size="small" effect="plain">已逾期</el-tag>
+              <span class="wb-meta">{{ formatShort(item.cycle_deadline) }}</span>
+            </div>
+          </div>
+          <div v-else class="wb-empty">近 7 天无截止</div>
+        </div>
+      </div>
+    </div>
     
     <!-- Content Grid -->
     <div class="content-grid">
@@ -240,8 +328,14 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../api'
+
+const router = useRouter()
+function go(path: string) {
+  router.push(path)
+}
 
 const authStore = useAuthStore()
 const stats = ref({
@@ -360,8 +454,48 @@ async function loadRejectionStats() {
   }
 }
 
+interface WorkbenchSummary {
+  follow_ups_today: number
+  follow_ups_overdue: number
+  pending_reviews: number
+  overdue_reviews: number
+  upcoming_deadlines: number
+  overdue_deadlines: number
+  pending_payments: number
+  pending_unpaid_amount: number
+}
+
+const workbenchLoading = ref(false)
+const workbench = ref<{
+  summary?: Partial<WorkbenchSummary>
+  follow_ups?: any[]
+  reviews?: any[]
+  deadlines?: any[]
+}>({})
+
+function formatShort(value?: string | null) {
+  if (!value) return '-'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  return d.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+async function loadWorkbench() {
+  workbenchLoading.value = true
+  try {
+    const { data } = await api.get('/api/dashboard/workbench')
+    workbench.value = data
+  } catch (e) {
+    console.error('Failed to load workbench:', e)
+    workbench.value = {}
+  } finally {
+    workbenchLoading.value = false
+  }
+}
+
 onMounted(() => {
   loadStats()
+  loadWorkbench()
   loadFunnel()
   loadRejectionStats()
 })
@@ -583,6 +717,106 @@ onMounted(() => {
 .action-icon.logs {
   background: rgba(107, 114, 128, 0.1);
   color: #6b7280;
+}
+
+.workbench-card .card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.workbench-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  padding: 16px 24px 8px;
+}
+
+.wb-metric {
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 14px 12px;
+  text-align: center;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.wb-metric:hover {
+  border-color: #e2e8f0;
+  transform: translateY(-1px);
+}
+
+.wb-metric.danger .wb-value {
+  color: #ef4444;
+}
+
+.wb-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.wb-label {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+.workbench-lists {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 8px 24px 20px;
+}
+
+.wb-list-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 8px;
+}
+
+.wb-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f8fafc;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.wb-item:hover .wb-name {
+  color: #6366f1;
+}
+
+.wb-name {
+  font-weight: 600;
+  color: #0f172a;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-meta {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.wb-empty {
+  font-size: 12px;
+  color: #cbd5e1;
+  padding: 8px 0;
+}
+
+@media (max-width: 1024px) {
+  .workbench-metrics,
+  .workbench-lists {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ---------- 转化漏斗 + 退回统计 ---------- */

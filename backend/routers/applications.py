@@ -119,6 +119,11 @@ async def update_application(
         if new_status == "提交评审机构审核":
             app.submitted_at = datetime.utcnow()
         app.status = new_status
+        from utils.workbench import mark_review_sla_started, clear_review_sla
+        if new_status == "完成资料":
+            mark_review_sla_started(db, app)
+        elif new_status not in ("完成资料", "资料补充", "二次申报"):
+            clear_review_sla(app)
         
         customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
         if customer:
@@ -279,6 +284,8 @@ async def submit_to_institution(
     app.status = "提交评审机构审核"
     app.institution_name = institution_name
     app.submitted_at = datetime.utcnow()
+    from utils.workbench import clear_review_sla
+    clear_review_sla(app)
     # 申报年度兜底：未设置时落到当前年份
     if not app.cycle_year:
         app.cycle_year = datetime.utcnow().year
@@ -414,6 +421,11 @@ async def revert_application_status(
     if target in ("完成资料", "资料补充", "初次申报", "二次申报"):
         app.submitted_at = None
         app.institution_name = None
+    from utils.workbench import mark_review_sla_started, clear_review_sla
+    if target == "完成资料":
+        mark_review_sla_started(db, app)
+    elif target not in ("完成资料", "资料补充", "二次申报"):
+        clear_review_sla(app)
 
     log = OperationLog(
         user_id=user.get("user_id") or user.get("id"),

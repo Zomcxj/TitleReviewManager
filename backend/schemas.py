@@ -151,6 +151,7 @@ class ApplicationResponse(BaseModel):
     submitted_at: Optional[datetime]
     institution_name: Optional[str]
     assigned_reviewer_id: Optional[int]
+    review_sla_deadline: Optional[datetime] = None
     cycle_year: Optional[int] = None
     cycle_deadline: Optional[datetime] = None
     contract_no: Optional[str] = None
