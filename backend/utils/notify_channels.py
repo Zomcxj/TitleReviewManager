@@ -78,14 +78,31 @@ def _send_email(to_addr: str, subject: str, content: str) -> bool:
         return False
 
 
+def _webhook_url_is_safe(url: str) -> bool:
+    """只允许 http/https 的 Webhook 地址。
+
+    WEBHOOK_URL 由管理员配置，但配置错误或被篡改时，urlopen 会接受
+    file:// 等协议读取本地文件（CWE-22）。这里从协议层面收紧。
+    """
+    from urllib.parse import urlparse
+    try:
+        scheme = urlparse(url).scheme.lower()
+    except Exception:
+        return False
+    return scheme in ("http", "https")
+
+
 def _send_webhook(payload: dict) -> bool:
     """推送 Webhook（企业微信/钉钉/飞书等机器人），失败返回 False"""
     if not (WEBHOOK_ENABLED and WEBHOOK_URL):
         return False
+    if not _webhook_url_is_safe(WEBHOOK_URL):
+        logger.warning("Webhook 地址协议不被允许（仅支持 http/https），已跳过推送")
+        return False
     try:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = UrlRequest(WEBHOOK_URL, data=data, headers={"Content-Type": "application/json"}, method="POST")
-        with urlopen(req, timeout=10) as resp:
+        with urlopen(req, timeout=10) as resp:  # nosec B310 - 协议已由 _webhook_url_is_safe 限制为 http/https
             ok = 200 <= resp.status < 300
         if ok:
             logger.info(f"Webhook 通知已推送: {payload.get('title')}")

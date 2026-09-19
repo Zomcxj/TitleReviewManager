@@ -2,7 +2,9 @@ fastapi>=0.100.0
 uvicorn[standard]>=0.22.0
 sqlalchemy>=2.0.0
 python-multipart>=0.0.5
-python-jose[cryptography]>=3.3.0
+# 用 PyJWT 而非 python-jose：后者依赖 ecdsa，而 ecdsa 存在未修复的
+# 时序攻击 CVE（PYSEC-2026-1325，上游声明不修），会使依赖扫描持续失败
+PyJWT>=2.8.0
 pydantic>=2.0.0
 passlib[bcrypt]>=1.7.4
 bcrypt>=4.0.0,<4.1.0

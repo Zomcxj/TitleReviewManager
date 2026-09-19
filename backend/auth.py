@@ -1,6 +1,6 @@
 import os
 from passlib.context import CryptContext
-from jose import jwt, JWTError
+import jwt
 from datetime import datetime, timedelta, timezone
 from fastapi import Request, HTTPException
 from typing import Optional, Dict, List
@@ -91,7 +91,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 def decode_access_token(token: str) -> Optional[dict]:
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
+    except jwt.PyJWTError:
         return None
 
 
