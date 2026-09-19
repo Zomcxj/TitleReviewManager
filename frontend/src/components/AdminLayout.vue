@@ -27,6 +27,16 @@
             <el-icon><UserFilled /></el-icon>
             <span>客户管理</span>
           </el-menu-item>
+          <el-menu-item index="/admin/follow-ups" class="nav-item">
+            <el-icon><AlarmClock /></el-icon>
+            <span>跟进日程</span>
+            <el-badge
+              :value="overdueCount"
+              :hidden="overdueCount === 0"
+              :max="99"
+              class="nav-badge"
+            />
+          </el-menu-item>
           <el-menu-item v-if="authStore.isSalesman || authStore.isAdmin" index="/admin/public-pool" class="nav-item">
             <el-icon><Grid /></el-icon>
             <span>公海池</span>
@@ -139,10 +149,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage } from 'element-plus'
+import api from '../api'
 import NotificationBell from './NotificationBell.vue'
 import {
   DataBoard,
@@ -160,6 +171,7 @@ import {
   Download,
   Monitor,
   Warning,
+  AlarmClock,
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -167,11 +179,35 @@ const route = useRoute()
 const authStore = useAuthStore()
 const sidebarCollapsed = ref(false)
 
+/** 逾期未跟进数量，用于菜单角标（>0 才展示） */
+const overdueCount = ref(0)
+let overdueTimer: ReturnType<typeof setInterval> | null = null
+
+async function loadOverdueCount() {
+  try {
+    const { data } = await api.get('/api/follow-ups/summary')
+    overdueCount.value = data.overdue || 0
+  } catch {
+    // 未登录/无权限时静默忽略
+    overdueCount.value = 0
+  }
+}
+
+onMounted(() => {
+  loadOverdueCount()
+  overdueTimer = setInterval(loadOverdueCount, 60000)
+})
+
+onUnmounted(() => {
+  if (overdueTimer) clearInterval(overdueTimer)
+})
+
 const activeMenu = computed(() => route.path)
 const pageTitle = computed(() => {
   const map: Record<string, string> = {
     '/admin/dashboard': '工作台',
     '/admin/customers': '客户管理',
+    '/admin/follow-ups': '跟进日程',
     '/admin/public-pool': '客户公海池',
     '/admin/registration-links': '注册链接管理',
     '/admin/reviews': '审核工作台',
@@ -326,6 +362,28 @@ function handleMenuSelect(index: string) {
   height: 20px;
   background: #818cf8;
   border-radius: 0 3px 3px 0;
+}
+
+.nav-menu .nav-item .nav-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* 独立徽标（无默认插槽）：改为静态定位，跟在文字右侧 */
+.nav-menu .nav-item .nav-badge :deep(.el-badge__content) {
+  position: static;
+  transform: none;
+  border: none;
+  background: #ef4444;
+  font-size: 11px;
+  padding: 0 6px;
+  height: 18px;
+  line-height: 18px;
+}
+
+.sidebar :deep(.el-menu--collapse) .nav-item .nav-badge {
+  display: none;
 }
 
 .sidebar :deep(.el-menu--collapse) .nav-item.is-active::before {

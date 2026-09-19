@@ -3,7 +3,7 @@
     <!-- Upload Bar -->
     <div class="upload-bar">
       <div class="upload-left">
-        <el-select v-model="selectedCategory" placeholder="选择材料类型" style="width: 160px">
+        <el-select v-model="selectedCategory" placeholder="选择材料类型" clearable style="width: 160px">
           <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
         </el-select>
         <el-upload
@@ -20,6 +20,23 @@
             </el-button>
           </template>
         </el-upload>
+      </div>
+      <div class="upload-right">
+        <el-tooltip
+          content="打包下载每类材料的最新版本；未选择材料类型时下载全部类别"
+          placement="top"
+          :show-after="400"
+        >
+          <el-button
+            type="success"
+            size="small"
+            :loading="batchDownloading"
+            @click="batchDownload"
+          >
+            <el-icon v-if="!batchDownloading"><Download /></el-icon>
+            {{ batchDownloadLabel }}
+          </el-button>
+        </el-tooltip>
       </div>
     </div>
 
@@ -245,6 +262,16 @@ const rejectDetailItem = ref<any>(null)
 const rejectDetailData = ref<any>({})
 const checklist = ref<any>(null)
 const showChecklist = ref(false)
+/** 批量打包下载中（打包可能耗时） */
+const batchDownloading = ref(false)
+
+const batchDownloadLabel = computed(() =>
+  batchDownloading.value
+    ? '打包中…'
+    : selectedCategory.value
+      ? `下载「${selectedCategory.value}」`
+      : '批量下载'
+)
 
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 const PDF_EXTS = ['.pdf']
@@ -378,6 +405,68 @@ async function downloadFile(materialId: number) {
   window.open(`/api/applications/${props.applicationId}/materials/file/${materialId}`, '_blank')
 }
 
+/** 从 Content-Disposition 解析文件名（优先 RFC 5987 的 filename*=UTF-8''） */
+function parseFilename(disposition: string | undefined): string {
+  if (!disposition) return ''
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+  const match = /filename="?([^";]+)"?/i.exec(disposition)
+  return match ? match[1] : ''
+}
+
+/** 批量下载：按当前选中的类别过滤，未选择则打包全部类别 */
+async function batchDownload() {
+  if (batchDownloading.value) return
+  batchDownloading.value = true
+  try {
+    const params: Record<string, any> = {}
+    if (selectedCategory.value) params.category = selectedCategory.value
+    const response = await api.get(
+      `/api/applications/${props.applicationId}/materials/download-zip`,
+      { params, responseType: 'blob' }
+    )
+    const disposition = response.headers?.['content-disposition'] as string | undefined
+    const filename = parseFilename(disposition) || `材料打包_${props.applicationId}.zip`
+    const url = window.URL.createObjectURL(new Blob([response.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('打包下载已开始')
+  } catch (e: any) {
+    // blob 响应下错误体也是 blob，需要异步解析出 detail
+    let detail = ''
+    const blob = e.response?.data
+    if (blob instanceof Blob) {
+      try {
+        detail = JSON.parse(await blob.text())?.detail || ''
+      } catch {
+        detail = ''
+      }
+    } else {
+      detail = e.response?.data?.detail || ''
+    }
+    if (e.response?.status === 403) {
+      ElMessage.error(detail || '无权限下载该批次材料')
+    } else if (e.response?.status === 404) {
+      ElMessage.warning(detail || '该批次没有可下载的材料')
+    } else {
+      ElMessage.error(detail || '批量下载失败')
+    }
+  } finally {
+    batchDownloading.value = false
+  }
+}
+
 async function deleteMaterial(materialId: number, version: number) {
   try {
     await ElMessageBox.confirm(`确认删除版本 v${version} 的材料？`, '删除确认')
@@ -483,6 +572,19 @@ watch(() => props.applicationId, loadMaterials, { immediate: true })
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.upload-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.upload-right :deep(.el-button) {
+  height: 36px !important;
+  padding: 8px 12px !important;
+  line-height: 1 !important;
+}
+.upload-right :deep(.el-button .el-icon) {
+  margin-right: 4px;
 }
 .upload-left :deep(.el-select .el-input__wrapper) {
   padding: 0 8px;

@@ -146,6 +146,7 @@ function getTypeIcon(type: string): string {
   const map: Record<string, string> = {
     'status_change': 'el-icon--warning',
     'follow_up_reminder': 'el-icon--primary',
+    'follow_up_overdue': 'el-icon--danger',
     'system': 'el-icon--info',
   }
   return map[type] || ''

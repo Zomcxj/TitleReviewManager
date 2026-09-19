@@ -137,3 +137,37 @@ async def get_performance_ranking(
     ranking.sort(key=lambda x: x["approved_count"], reverse=True)
     
     return {"ranking": ranking[:limit]}
+
+
+@router.get("/rejection-stats")
+async def get_rejection_stats_endpoint(
+    days: int = Query(90, ge=1, le=3650, description="统计最近多少天"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """材料退回原因统计（哪些材料最常被退回、按业务员对比）。
+
+    业务员仅统计自己名下客户；admin/reviewer 统计全部。
+    """
+    from utils.rejection_stats import get_rejection_stats
+    salesman_id = None
+    if current_user.get("role") == "salesman":
+        salesman_id = current_user.get("user_id") or current_user.get("id")
+    return get_rejection_stats(db, days=days, salesman_id=salesman_id)
+
+
+@router.get("/funnel")
+async def get_conversion_funnel(
+    days: int = Query(180, ge=1, le=3650, description="统计最近多少天"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """申报转化漏斗：咨询 → 建档 → 提交机构 → 通过。
+
+    业务员仅统计自己名下客户。
+    """
+    from utils.conversion import get_conversion_funnel as _funnel
+    salesman_id = None
+    if current_user.get("role") == "salesman":
+        salesman_id = current_user.get("user_id") or current_user.get("id")
+    return _funnel(db, days=days, salesman_id=salesman_id)

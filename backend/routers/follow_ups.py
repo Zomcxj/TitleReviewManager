@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from database import get_db
@@ -108,3 +108,29 @@ async def delete_follow_up(
     db.commit()
     
     return {"message": "删除成功"}
+
+
+@router.get("/schedule")
+async def get_follow_up_schedule(
+    scope: str = Query("today", description="today | overdue | week"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """待跟进日程（今天/逾期/未来一周）。
+
+    业务员仅自己名下客户；admin/reviewer 可见全部。
+    """
+    if scope not in ("today", "overdue", "week"):
+        raise HTTPException(status_code=400, detail="scope 只能是 today / overdue / week")
+    from utils.follow_up_schedule import get_pending_follow_ups
+    return get_pending_follow_ups(db, current_user, scope)
+
+
+@router.get("/summary")
+async def get_follow_up_summary_endpoint(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """待跟进汇总（用于工作台卡片与侧边提醒）"""
+    from utils.follow_up_schedule import get_follow_up_summary
+    return get_follow_up_summary(db, current_user)

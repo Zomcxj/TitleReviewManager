@@ -285,3 +285,91 @@ async def browse_files(application_id: int, request: Request, db: Session = Depe
     check_customer_ownership(user, customer)
     rel = _get_customer_dir(customer)
     return {"customer_dir": rel, "tree": storage_list(rel)}
+
+
+@router.get("/download-zip")
+async def download_materials_zip(
+    application_id: int,
+    request: Request,
+    category: str = None,
+    db: Session = Depends(get_db),
+):
+    """批量下载某批次材料为 zip（可选按类别过滤）。
+
+    业务场景：客户或机构需要整套材料时，逐个下载极不方便。
+    实现说明：材料存放在 NAS，逐个读入内存后打包；限制单次总大小避免
+    一次性占用过多内存（超出时提示分批下载）。
+    """
+    user = await get_current_user(request)
+    app = db.query(Application).filter(Application.id == application_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="申报批次不存在")
+    customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
+    check_customer_ownership(user, customer)
+
+    q = db.query(Material).filter(Material.application_id == application_id)
+    if category:
+        q = q.filter(Material.category == category)
+    materials = q.order_by(Material.category, Material.version).all()
+    if not materials:
+        raise HTTPException(status_code=404, detail="该批次没有可下载的材料")
+
+    import io
+    import zipfile
+
+    MAX_TOTAL_BYTES = 300 * 1024 * 1024  # 单次打包上限 300MB
+
+    buf = io.BytesIO()
+    total = 0
+    added = 0
+    missing = []
+    # 只保留每个类别的最新版本（历史版本不打包，避免混淆）
+    latest: dict = {}
+    for m in materials:
+        latest[(m.category, )] = m  # 因已按 version 升序，最后一条即最新
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for (cat, ), m in sorted(latest.items(), key=lambda x: x[0][0]):
+            content = read_file(m.file_path)
+            if content is None:
+                missing.append(m.filename)
+                continue
+            total += len(content)
+            if total > MAX_TOTAL_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"材料总大小超过 {MAX_TOTAL_BYTES // 1024 // 1024}MB，请按类别分批下载",
+                )
+            # zip 内保留类别目录，便于解压后归类
+            arcname = f"{cat}/{m.filename}"
+            zf.writestr(arcname, content)
+            added += 1
+
+        if missing:
+            zf.writestr("_缺失文件说明.txt",
+                        "以下材料在存储中不存在，可能已被移动或删除：\n" + "\n".join(missing))
+
+    if added == 0:
+        raise HTTPException(status_code=404, detail="材料文件均不存在于存储中")
+
+    buf.seek(0)
+    data = buf.read()
+
+    # 下载审计（材料含客户证件影像，必须留痕）
+    db.add(OperationLog(
+        user_id=user.get("user_id") or user.get("id"),
+        username=user.get("username", ""),
+        action="批量下载材料",
+        resource_type="application",
+        resource_id=application_id,
+        new_value={"detail": f"客户: {customer.name if customer else ''}, 打包 {added} 份, 类别: {category or '全部'}"},
+    ))
+    db.commit()
+
+    from urllib.parse import quote
+    zip_name = f"{customer.name if customer else '客户'}_材料_{app.batch_number or application_id}.zip"
+    encoded = quote(zip_name, safe="")
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=\"materials.zip\"; filename*=UTF-8''{encoded}"},
+    )
