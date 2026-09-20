@@ -5,7 +5,8 @@ Revises: ea3189f77aed
 Create Date: 2026-09-18 21:28:57.208471
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 from alembic import op
 import sqlalchemy as sa
@@ -13,9 +14,9 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '6b0297d0f9fa'
-down_revision: Union[str, Sequence[str], None] = 'ea3189f77aed'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = 'ea3189f77aed'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

@@ -5,7 +5,8 @@ Revises: 8e843f2098de
 Create Date: 2026-09-18 22:55:56.503991
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 from alembic import op
 import sqlalchemy as sa
@@ -13,9 +14,9 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '23c8c0e5c6dd'
-down_revision: Union[str, Sequence[str], None] = '8e843f2098de'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = '8e843f2098de'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

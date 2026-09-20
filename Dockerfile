@@ -5,7 +5,7 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM python:3.10-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
@@ -30,5 +30,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
 
-# 先执行数据库迁移再启动；多 worker 提升并发；proxy-headers 支持反向代理
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-4} --proxy-headers"]
+# 先执行数据库引导（Alembic 迁移，并兼容 create_all 建出的历史库）再启动；
+# 多 worker 提升并发；proxy-headers 支持反向代理
+CMD ["sh", "-c", "python db_bootstrap.py && exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-4} --proxy-headers"]

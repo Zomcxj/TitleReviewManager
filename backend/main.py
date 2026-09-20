@@ -1,20 +1,84 @@
-from fastapi import FastAPI, Request, HTTPException
+import logging
+import os
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse
-from database import engine, Base
 from sqlalchemy import text
-from routers import auth, customers, applications, materials, reviews, feedback, registration, audit, exports, notifications, follow_ups, public_pool, batch, dashboard, users, imports, word_import, public_progress, finance, system_config, recycle_bin, backup, client_errors
-import os, logging
-from datetime import datetime, timezone
+
+from database import Base, engine
+from routers import (
+    applications,
+    audit,
+    auth,
+    backup,
+    batch,
+    client_errors,
+    customers,
+    dashboard,
+    exports,
+    feedback,
+    finance,
+    follow_ups,
+    imports,
+    materials,
+    notifications,
+    public_pool,
+    public_progress,
+    recycle_bin,
+    registration,
+    reviews,
+    system_config,
+    users,
+    word_import,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,https://5173-e5215720889685e1.monkeycode-ai.online").split(",")
 
-app = FastAPI(title="职称服务内部管理平台", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """应用生命周期：启动时做只读的 schema 漂移检测并拉起内置调度器。
+
+    schema 权威统一到 Alembic 一条路径：结构变更只能通过迁移完成，
+    启动钩子不再执行任何 DDL。此前这里会 create_all 建表并自动补列/补索引，
+    导致「库结构是谁改的」无法追溯，也掩盖了迁移链本身的缺陷
+    （初始迁移曾漏建 applications.cycle_deadline 索引，被自动补索引长期掩盖）。
+
+    建库/升级请使用 `python db_bootstrap.py` 或 `alembic upgrade head`；
+    Docker 启动命令已改为前者。这里只检测并告警，不修改任何结构。
+    """
+    try:
+        from utils.schema_sync import log_drift
+        log_drift(engine, Base)
+    except Exception as e:
+        logger.error(f"schema 漂移检测失败（不影响启动）: {e}", exc_info=True)
+
+    # 启动内置调度器：SLA 自动回收/超时提醒此前依赖外部 cron，部署时极易遗漏导致功能静默失效
+    try:
+        from utils.scheduler import start_scheduler
+        start_scheduler()
+    except Exception as e:
+        logger.error(f"调度器启动失败（不影响启动）: {e}", exc_info=True)
+
+    yield
+
+    # 关闭时停掉调度线程，避免优雅退出时线程仍在内核中运行
+    try:
+        from utils.scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception as e:
+        logger.warning(f"停止调度器失败: {e}")
+
+
+app = FastAPI(title="职称服务内部管理平台", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # 审计日志防篡改：注册哈希链钩子（任何 OperationLog 落库前自动计算链式哈希）
@@ -25,7 +89,8 @@ except Exception as _e:
     logger.warning(f"审计哈希链钩子注册失败: {_e}")
 
 # 安全响应头（CSP / X-Frame-Options / nosniff 等），详见 utils/security_headers.py
-from utils.security_headers import SecurityHeadersMiddleware, HttpsRedirectMiddleware
+from utils.security_headers import HttpsRedirectMiddleware, SecurityHeadersMiddleware
+
 app.add_middleware(SecurityHeadersMiddleware)
 # 强制 HTTPS 跳转（FORCE_HTTPS=1 时生效；健康检查路径豁免）
 app.add_middleware(HttpsRedirectMiddleware)
@@ -63,33 +128,6 @@ if os.path.exists(frontend_dir):
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="frontend_assets")
 
 
-@app.on_event("startup")
-def ensure_tables():
-    """建表兜底 + 轻量结构同步。
-
-    Alembic 负责正式迁移（容器启动时执行 alembic upgrade head）；
-    这里保证：
-    1) 全新环境即使忘记跑迁移也能直接启动（create_all 建缺失表）
-    2) 已有库升级代码后自动补齐新增列（只加表/加列，不删改）
-    """
-    Base.metadata.create_all(bind=engine)
-    try:
-        from utils.schema_sync import sync_schema
-        summary = sync_schema(engine, Base)
-        if summary["created_tables"] or summary["added_columns"] or summary.get("created_indexes"):
-            logger.info(
-                f"schema 同步完成: 新表 {summary['created_tables']}, "
-                f"新列 {len(summary['added_columns'])} 个, 新索引 {len(summary.get('created_indexes', []))} 个"
-            )
-    except Exception as e:
-        logger.error(f"schema 同步失败（不影响启动）: {e}", exc_info=True)
-
-    # 启动内置调度器：SLA 自动回收/超时提醒此前依赖外部 cron，部署时极易遗漏导致功能静默失效
-    try:
-        from utils.scheduler import start_scheduler
-        start_scheduler()
-    except Exception as e:
-        logger.error(f"调度器启动失败（不影响启动）: {e}", exc_info=True)
 
 
 @app.get("/api/health")
@@ -112,8 +150,9 @@ async def health_detail():
     上线后最常踩的坑是「配置没生效却不知道」——比如 JWT 密钥用的是默认值、
     存储目录不可写、外部通知配了但发不出去。这里主动做一次自检并给出建议。
     """
-    from database import SessionLocal, DATABASE_URL
     import os as _os
+
+    from database import DATABASE_URL, SessionLocal
 
     checks = []
 

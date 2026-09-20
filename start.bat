@@ -9,8 +9,40 @@ echo   ║     职称评审管理系统 · 正在启动...       ║
 echo   ╚═══════════════════════════════════════════╝
 echo.
 
-set "PYTHON=D:\JetBrains\Anaconda3\envs\LLM\python.exe"
-set "PIP=D:\JetBrains\Anaconda3\envs\LLM\Scripts\pip.exe"
+:: 定位 Python：优先 conda 环境 LLM，逐个探测常见安装位置。
+:: 候选必须实际执行成功才算有效 —— 仅用 exist 判断会选中某些装了
+:: 「应用执行别名」的占位 python.exe（存在但执行即失败）。
+:: 注意：块内注释一律用 rem，不能用 ::（:: 在括号块内会被当作标签解析并报错）。
+set "PYTHON="
+for %%p in (
+    "D:\Softwaredata\miniforge3\envs\llm\python.exe"
+    "D:\JetBrains\Anaconda3\envs\LLM\python.exe"
+    "C:\Users\%USERNAME%\miniconda3\envs\LLM\python.exe"
+    "C:\Users\%USERNAME%\anaconda3\envs\LLM\python.exe"
+    "D:\Anaconda3\envs\LLM\python.exe"
+) do (
+    if not defined PYTHON if exist %%p (
+        "%%~p" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+        if not errorlevel 1 set "PYTHON=%%~p"
+    )
+)
+if not defined PYTHON (
+    rem 回退到 PATH 中的 python（要求 3.10+）
+    for /f "delims=" %%p in ('where python 2^>nul') do (
+        if not defined PYTHON (
+            "%%p" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+            if not errorlevel 1 set "PYTHON=%%p"
+        )
+    )
+)
+if not defined PYTHON (
+    echo   ✗ 未找到可用的 Python（需 3.10+）。请安装 Python 或 conda 环境 LLM。
+    pause
+    exit /b 1
+)
+:: 依赖安装用 `python -m pip`：不推导 pip.exe 路径。
+:: %%~dp 对文件路径返回的是所在目录，拼 `\pip.exe` 会得到错误路径
+:: （实测 D:\...\envs\llm\python.exe → D:\pip.exe），因此不再单独维护 PIP 变量。
 
 :: Detect LAN IP
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
@@ -21,14 +53,42 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
 set "LAN_IP=%LAN_IP: =%"
 if "%LAN_IP%"=="" set "LAN_IP=localhost"
 
-echo   [1/3] 安装后端依赖...
-"%PIP%" install -q -r backend\requirements.txt 2>nul
+echo   [1/5] 安装后端依赖...
+"%PYTHON%" -m pip install -q -r backend\requirements.txt 2>nul
 
-echo   [2/3] 初始化数据库...
+echo   [2/5] 引导数据库（Alembic 迁移）...
+cd backend
+"%PYTHON%" db_bootstrap.py
+if errorlevel 1 (
+    echo.
+    echo   ✗ 数据库迁移失败，启动中止。请检查上面的错误信息。
+    cd ..
+    pause
+    exit /b 1
+)
+cd ..
+
+echo   [3/5] 检查前端构建产物...
+where node >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo   ✗ 未找到 Node.js，无法构建前端。
+    echo     请安装 Node.js 18+ 后重试；或手动执行: cd frontend ^&^& npm install ^&^& npm run build
+    pause
+    exit /b 1
+)
+node frontend\scripts\ensure-build.mjs
+if errorlevel 1 (
+    echo   ✗ 前端构建失败，启动中止。
+    pause
+    exit /b 1
+)
+
+echo   [4/5] 填充种子数据...
 cd backend && "%PYTHON%" seed.py >nul 2>&1 && cd ..
 
-echo   [3/3] 启动服务...
-echo   使用 Python: 3.10.16 (LLM)
+echo   [5/5] 启动服务...
+echo   使用 Python: %PYTHON%
 echo.
 echo   ┌───────────────────────────────────────────────────┐
 echo   │  本机访问: http://localhost:8000                  │
