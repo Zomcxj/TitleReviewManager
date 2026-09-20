@@ -69,7 +69,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 import { useAuthStore } from '../stores/auth'
@@ -114,8 +114,8 @@ function statusType(status: string) {
 
 function getHint(status: string) {
   if (!status) return '待完善信息'
+  // 非业务员（审核员/管理员）统一走 else 分支的提示文案
   const isSalesman = authStore.isSalesman || authStore.isAdmin
-  const isReviewer = authStore.isReviewer || authStore.isAdmin
   const hints: Record<string, string> = {
     '初次申报': isSalesman ? '需上传材料' : '待审核',
     '资料补充': isSalesman ? '需联系客户补充' : '等待重新提交',
@@ -140,7 +140,9 @@ async function loadSalesmen() {
     const map: Record<number, string> = {}
     data.forEach((s: any) => { map[s.id] = s.real_name })
     salesmenMap.value = map
-  } catch {}
+  } catch {
+    // 业务员列表仅用于筛选下拉，取不到时降级为不显示该筛选
+  }
 }
 
 async function loadData() {

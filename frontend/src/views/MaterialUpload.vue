@@ -230,14 +230,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import api from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowUp, ArrowDown, CircleCheck, WarningFilled } from '@element-plus/icons-vue'
 import { docxToHtml, fetchMaterialBuffer, getFileExt } from '../utils/docPreview'
 
 const props = defineProps<{ applicationId: number; canSubmit?: boolean }>()
-const emit = defineEmits(['submit-review'])
 
 const categories = ['身份证明', '学历学位', '职称证书', '聘用/劳动合同', '业绩成果', '论文著作', '继续教育', '其他材料']
 const selectedCategory = ref('身份证明')
@@ -372,7 +371,7 @@ async function loadChecklist() {
   }
 }
 
-function beforeUpload(file: File) {
+function beforeUpload() {
   if (!selectedCategory.value) {
     ElMessage.warning('请先选择材料类型')
     return false
@@ -473,7 +472,9 @@ async function deleteMaterial(materialId: number, version: number) {
     await api.delete(`/api/applications/${props.applicationId}/materials/${materialId}`)
     ElMessage.success('已删除')
     loadMaterials()
-  } catch {}
+  } catch {
+    // 用户点「取消」走这里，属正常流程；接口失败已由 api 拦截器统一提示
+  }
 }
 
 function materialFileUrl(materialId: number) {
@@ -552,10 +553,6 @@ function handleTreeNodeClick(node: any) {
   if (matching) {
     previewFile(matching)
   }
-}
-
-function handleSubmitReview() {
-  emit('submit-review')
 }
 
 watch(() => props.applicationId, loadMaterials, { immediate: true })

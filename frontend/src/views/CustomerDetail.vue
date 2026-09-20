@@ -642,10 +642,6 @@ const isSalesman = computed(() => authStore.isSalesman || authStore.isAdmin)
 // 申报周期设置：仅管理员/业务员
 const canEditCycle = computed(() => authStore.isAdmin || authStore.isSalesman)
 
-function canOperate() {
-  return authStore.isSalesman || authStore.isAdmin
-}
-
 const canSubmitReview = computed(() => {
   return isSalesman.value && currentApp.value && ['初次申报', '资料补充', '二次申报'].includes(currentApp.value.status)
 })

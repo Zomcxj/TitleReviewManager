@@ -276,11 +276,15 @@ function getCustomerName(row: Log): string {
   try {
     const newVal = typeof row.new_value === 'string' ? JSON.parse(row.new_value) : row.new_value
     if (newVal?.name) return newVal.name
-  } catch {}
+  } catch {
+    // 历史数据可能不是合法 JSON，解析失败时尝试下一个来源
+  }
   try {
     const oldVal = typeof row.old_value === 'string' ? JSON.parse(row.old_value) : row.old_value
     if (oldVal?.name) return oldVal.name
-  } catch {}
+  } catch {
+    // 两个来源都取不到，返回空串由调用方展示占位
+  }
   return ''
 }
 

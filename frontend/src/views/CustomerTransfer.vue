@@ -87,7 +87,9 @@ async function loadSalesmen() {
   try {
     const { data } = await api.get('/api/customers/salesmen')
     salesmenList.value = data || []
-  } catch {}
+  } catch {
+    // 转让目标下拉依赖此列表，取不到时保持空列表
+  }
 }
 
 async function loadData() {

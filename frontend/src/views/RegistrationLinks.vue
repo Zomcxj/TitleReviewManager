@@ -150,7 +150,9 @@ async function deactivateToken(id: number) {
     await api.delete(`/api/registration-links/${id}`)
     ElMessage.success('链接已停用')
     loadTokens()
-  } catch { }
+  } catch {
+    // 用户取消确认属正常流程；接口失败由 api 拦截器统一提示
+  }
 }
 
 function copyLink(row: any) {
@@ -168,7 +170,9 @@ async function deleteToken(id: number) {
     await api.delete(`/api/registration-links/${id}/hard`)
     ElMessage.success('链接已删除')
     loadTokens()
-  } catch { }
+  } catch {
+    // 用户取消确认属正常流程；接口失败由 api 拦截器统一提示
+  }
 }
 
 onMounted(loadTokens)

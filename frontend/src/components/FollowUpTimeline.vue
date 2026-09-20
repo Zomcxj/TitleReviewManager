@@ -94,7 +94,7 @@ async function loadFollowUps() {
   try {
     const { data } = await api.get(`/api/follow-ups/customer/${props.customerId}`)
     followUps.value = data
-  } catch (e) {
+  } catch {
     ElMessage.error('加载跟进记录失败')
   } finally {
     loading.value = false

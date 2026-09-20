@@ -133,7 +133,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../api'
@@ -218,12 +218,6 @@ async function selectApp(app: any) {
 function downloadFile(materialId: number) {
   const appId = selectedApp.value?.application_id
   window.open(`/api/applications/${appId}/materials/file/${materialId}`, '_blank')
-}
-
-function showReviewDialog(material: any) {
-  currentMaterial.value = material
-  reviewForm.value = { issue_type: '', description: '' }
-  reviewDialogVisible.value = true
 }
 
 async function handleSingleApprove(material: any) {

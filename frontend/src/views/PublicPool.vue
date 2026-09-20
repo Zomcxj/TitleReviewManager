@@ -115,7 +115,7 @@ async function loadData() {
     })
     customers.value = data.items
     total.value = data.total
-  } catch (e) {
+  } catch {
     ElMessage.error('加载公海池失败')
   } finally {
     loading.value = false
