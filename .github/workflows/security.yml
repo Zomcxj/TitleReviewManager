@@ -41,6 +41,14 @@ jobs:
           bandit -r backend -ll -x backend/tests,backend/alembic \
             --skip B101,B603,B607
 
+      - name: 代码静态检查（ruff）
+        working-directory: backend
+        run: |
+          # 只启用能发现真实缺陷的规则集（见 backend/ruff.toml 的取舍说明）：
+          # F 未使用导入/变量与变量遮蔽、E9 语法错误、B 逻辑陷阱、UP 废弃写法、
+          # C4/SIM 冗余写法。规则集刻意不含纯格式项，避免噪音淹没真问题。
+          ruff check .
+
   frontend-security:
     name: 前端依赖扫描
     runs-on: ubuntu-latest
@@ -64,16 +72,31 @@ jobs:
           # 已在 scripts/audit-check.mjs 中登记理由；其余 high/critical 仍会失败
           node scripts/audit-check.mjs
 
+      - name: 代码静态检查（eslint）
+        working-directory: frontend
+        run: |
+          # --quiet 只报错误级问题（未使用变量/导入、未定义变量、Vue 反模式等），
+          # 见 frontend/eslint.config.mjs 的取舍说明；any 类告警不作为门禁
+          npx eslint src --quiet
+
   backend-tests:
-    name: 后端测试
+    name: 后端测试 (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 同时测最低支持版本与生产镜像版本：
+        # 3.10 是代码声明的最低版本，3.12 是 Docker 实际运行版本。
+        # 此前 CI 只跑 3.10，而开发机是 3.12 —— 版本错位让 3.12 下的
+        # 废弃警告（如 datetime.utcnow、FastAPI on_event）在 CI 里完全不可见。
+        python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
       - name: 安装 Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python-version }}
 
       - name: 安装依赖
         run: |
@@ -86,6 +109,29 @@ jobs:
           JWT_SECRET_KEY: ci-test-secret-key-not-for-production
           SCHEDULER_ENABLED: "0"
         run: pytest -q
+
+      - name: 检查废弃警告（仅生产运行版本）
+        if: matrix.python-version == '3.12'
+        working-directory: backend
+        env:
+          JWT_SECRET_KEY: ci-test-secret-key-not-for-production
+          SCHEDULER_ENABLED: "0"
+        run: |
+          # 生产镜像跑 3.12，这里把 3.12 的废弃警告当作门禁，防止又引入
+          # datetime.utcnow / FastAPI on_event 这类将在未来版本移除的写法。
+          #
+          # 两个要点：
+          # 1. 不能写成 `python ... | tail -20` —— 管道退出码取自 tail，
+          #    会把失败吞掉（实测 `false | tail -5` 退出码为 0），门禁形同虚设。
+          # 2. 只对本项目模块生效（module= 正则）。第三方库内部的废弃警告
+          #    （pydantic/fastapi/starlette）不归我们管，不该让 CI 变红。
+          python -c "
+          import warnings
+          warnings.filterwarnings('error', category=DeprecationWarning,
+                                  module=r'^(main|routers|utils|tasks|models|schemas|enums|database|auth|storage|db_bootstrap|seed)')
+          import main
+          print('本项目代码在 3.12 下无自身触发的废弃警告')
+          "
 
   migration-check:
     name: 迁移可执行性检查
@@ -109,8 +155,9 @@ jobs:
           JWT_SECRET_KEY: ci-test-secret-key-not-for-production
           DATABASE_URL: sqlite:///./ci_migration_check.db
         run: |
-          # 验证迁移链完整：全新库能建出全部业务表
-          alembic upgrade head
+          # 走真实的启动路径（Dockerfile 用的就是 db_bootstrap.py），
+          # 而不是直接调 alembic —— 这样启动逻辑本身也在 CI 覆盖内
+          python db_bootstrap.py
           python - <<'PY'
           import sqlite3, sys
           con = sqlite3.connect("ci_migration_check.db")
@@ -125,4 +172,30 @@ jobs:
               print(f"迁移缺失表: {missing}")
               sys.exit(1)
           print(f"迁移检查通过，共 {len(tables)} 张表")
+          PY
+
+      - name: 接管历史库（create_all 建出的库）
+        working-directory: backend
+        env:
+          JWT_SECRET_KEY: ci-test-secret-key-not-for-production
+          DATABASE_URL: sqlite:///./ci_legacy_check.db
+        run: |
+          # 回归防护：本地 start 脚本用 create_all 建表、不写 alembic 版本记录。
+          # 这类库此前会让 `alembic upgrade head` 因 table already exists 失败，
+          # 从而阻断容器启动。这里显式验证接管路径仍然可用。
+          python - <<'PY'
+          import models  # noqa: F401
+          from database import Base, engine
+          Base.metadata.create_all(bind=engine)
+          print("已用 create_all 建出历史库（无 alembic 版本记录）")
+          PY
+          python db_bootstrap.py
+          python - <<'PY'
+          import sqlite3, sys
+          con = sqlite3.connect("ci_legacy_check.db")
+          row = con.execute("SELECT version_num FROM alembic_version").fetchone()
+          if not row or not row[0]:
+              print("历史库未被 alembic 接管")
+              sys.exit(1)
+          print(f"历史库已被接管，版本 {row[0]}")
           PY

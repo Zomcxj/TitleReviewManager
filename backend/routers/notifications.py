@@ -1,10 +1,15 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
+from auth import get_current_user
 from database import get_db
 from models import Notification, User
 from schemas import NotificationListResponse
-from auth import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/notifications", tags=["消息通知"])
 
@@ -159,7 +164,8 @@ def create_notification(
             content=content,
             email=getattr(user, "email", None) if user else None,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        # 外部推送失败不影响站内通知，但静默 pass 会让「配置了却没发出去」无从排查
+        logger.warning(f"外部通知推送失败（站内通知已创建）: {e}")
 
     return notification

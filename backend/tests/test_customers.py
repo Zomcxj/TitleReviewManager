@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+
 def create_test_customer(client: TestClient, token_cookie: str):
     return client.post(
         "/api/customers/",

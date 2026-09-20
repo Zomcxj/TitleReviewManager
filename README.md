@@ -28,7 +28,8 @@
 cd backend
 pip install -r requirements.txt
 cp .env.example .env            # 至少配置 JWT_SECRET_KEY
-python seed.py                  # 建表 + 种子数据
+python db_bootstrap.py          # 建库/升级（Alembic 迁移；兼容 create_all 建出的历史库）
+python seed.py                  # 填充种子数据（不再负责建表）
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 # 前端（另一个终端）
@@ -37,12 +38,17 @@ npm install
 npm run dev                     # http://localhost:5173，/api 自动代理到 8000
 ```
 
+> 也可以直接用 `start.bat`（Windows）/ `start.sh`：自动定位 Python、执行迁移、
+> 按需构建前端（dist 不入版本控制）、填充种子数据并启动服务。
+
 ### 运行测试
 
 ```bash
-cd backend && python -m pytest   # 121 个用例：状态机、数据隔离、上传校验、SLA、待办工作台等
+cd backend && python -m pytest   # 218 个用例：状态机、数据隔离、上传校验、SLA、备份恢复、文档一致性等
 cd frontend && npm test          # 前端 Vitest
 ```
+
+> 测试一律使用临时数据库文件，不会触碰开发库 `title_service.db`。
 
 ### Docker 部署
 
@@ -68,19 +74,20 @@ curl http://localhost:8000/api/health/detail   # 部署自检
 
 ```
 ├── backend/
-│   ├── routers/          # 21 个 API 路由模块（auth/customers/applications/materials/reviews/finance/...）
+│   ├── routers/          # 23 个 API 路由模块（auth/customers/applications/materials/reviews/finance/...）
 │   ├── models.py         # SQLAlchemy 模型（软删除、审计哈希链、会话表）
 │   ├── schemas.py        # Pydantic 请求/响应模型
 │   ├── enums.py          # 集中枚举、状态机转换表、必传材料清单、系统配置默认值
 │   ├── auth.py           # JWT + token_version 撤销 + bcrypt
 │   ├── storage.py        # 存储抽象层（本地 / SMB NAS）
-│   ├── alembic/          # 数据库迁移
-│   ├── tests/            # 121 个 pytest 用例
-│   ├── tasks/            # SLA 调度、自动备份
-│   └── utils/            # 数据隔离/脱敏/上传校验/调度器/催办/哈希链等 19 个工具模块
+│   ├── db_bootstrap.py   # 数据库引导（Alembic 迁移 + 接管 create_all 历史库）
+│   ├── alembic/          # 数据库迁移（schema 的唯一权威）
+│   ├── tests/            # 218 个 pytest 用例
+│   ├── tasks/            # SLA 调度、自动备份、恢复演练
+│   └── utils/            # 数据隔离/脱敏/上传校验/调度器/催办/哈希链等 22 个工具模块
 ├── frontend/
 │   └── src/
-│       ├── views/        # 23 个页面（含今日待办工作台、功能教程、回收站、备份等）
+│       ├── views/        # 24 个页面（含今日待办工作台、功能教程、回收站、备份等）
 │       ├── components/   # AdminLayout（分组侧边栏）、NotificationBell 等
 │       └── stores/ api/ router/
 ├── docs/                 # features.md（功能说明）/ api.md（接口）/ deployment.md（部署）

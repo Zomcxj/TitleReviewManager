@@ -3,11 +3,12 @@
 覆盖：上传校验（扩展名/大小/内容魔数）、版本号、审核权限与状态联动。
 """
 import io
+
 import pytest
 from fastapi.testclient import TestClient
 
-import models
 import auth
+import models
 
 VALID_ID = "110101199001010015"
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"

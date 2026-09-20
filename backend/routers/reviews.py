@@ -1,16 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
-from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
-from database import get_db
-from models import Review, Material, Application, User, OperationLog
-from schemas import ReviewResponse
-from auth import get_current_user, require_role
-from enums import ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE
-from typing import Optional
 import os
 import uuid
 from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+
+from auth import get_current_user, require_role
+from database import get_db
+from enums import ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE
+from models import Application, Material, OperationLog, Review, User
 from routers.notifications import create_notification
+from schemas import ReviewResponse
 
 router = APIRouter(prefix="/api/reviews", tags=["审核"])
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -19,7 +20,7 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 
 @router.get("/pending")
 async def list_pending_reviews(
-    status: Optional[str] = Query(None, description="完成资料 / 资料补充 / 二次申报"),
+    status: str | None = Query(None, description="完成资料 / 资料补充 / 二次申报"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -182,8 +183,8 @@ async def batch_review(
         body = await request.json()
         if not isinstance(body, dict):
             body = {}
-    except Exception:
-        raise HTTPException(status_code=400, detail="请求体格式错误")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="请求体格式错误") from e
     application_id = body.get("application_id")
     app = db.query(Application).filter(Application.id == application_id).first()
     if not app:

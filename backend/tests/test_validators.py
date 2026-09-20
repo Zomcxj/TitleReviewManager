@@ -1,6 +1,7 @@
 """身份证号 / 手机号校验单元测试"""
 import pytest
-from utils.validators import validate_id_number, validate_phone, normalize_id_number
+
+from utils.validators import normalize_id_number, validate_id_number, validate_phone
 
 
 class TestIdNumber:

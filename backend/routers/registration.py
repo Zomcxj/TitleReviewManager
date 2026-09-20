@@ -1,16 +1,18 @@
+import os
+import secrets
+import socket
+import uuid
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
-from database import get_db
-from models import RegistrationToken, Customer, Application, OperationLog, User
-from schemas import RegistrationTokenCreate, RegistrationTokenResponse, SelfRegisterRequest, CustomerResponse
-from enums import CustomerSource
+
 from auth import get_current_user
-from datetime import datetime, timedelta, timezone
-import secrets
-import uuid
-import os
-import socket
-from typing import List, Dict
+from database import get_db
+from enums import CustomerSource
+from models import Application, Customer, OperationLog, RegistrationToken, User
+from schemas import CustomerResponse, RegistrationTokenCreate, RegistrationTokenResponse, SelfRegisterRequest
+
 
 def get_local_ip() -> str:
     """获取本机局域网 IP"""
@@ -25,15 +27,12 @@ def get_local_ip() -> str:
 
 # 优先使用环境变量，否则自动检测局域网 IP
 _env_url = os.getenv("PUBLIC_URL")
-if _env_url:
-    PUBLIC_URL = _env_url.rstrip("/")
-else:
-    PUBLIC_URL = f"http://{get_local_ip()}:8000"
+PUBLIC_URL = _env_url.rstrip("/") if _env_url else f"http://{get_local_ip()}:8000"
 
 router = APIRouter(prefix="/api/registration-links", tags=["专属注册链接"])
 
 
-@router.get("/", response_model=List[Dict])
+@router.get("/", response_model=list[dict])
 async def list_tokens(request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
     if user["role"] not in ("salesman", "admin"):

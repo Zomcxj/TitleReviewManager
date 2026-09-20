@@ -1,10 +1,10 @@
 import os
-from passlib.context import CryptContext
-import jwt
-from datetime import datetime, timedelta, timezone
-from fastapi import Request, HTTPException
-from typing import Optional, Dict, List
 import time
+from datetime import datetime, timedelta, timezone
+
+import jwt
+from fastapi import HTTPException, Request
+from passlib.context import CryptContext
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 if not SECRET_KEY:
@@ -16,9 +16,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 480
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Rate limiting: IP -> list of timestamps
-_login_attempts: Dict[str, List[float]] = {}
+_login_attempts: dict[str, list[float]] = {}
 # Account lockout: username -> {count, locked_until}
-_account_locks: Dict[str, Dict] = {}
+_account_locks: dict[str, dict] = {}
 
 MAX_ATTEMPTS_PER_WINDOW = 100
 RATE_WINDOW_SECONDS = 300  # 5 minutes
@@ -81,14 +81,14 @@ def reset_failed_login(username: str) -> None:
         del _account_locks[username]
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def decode_access_token(token: str) -> Optional[dict]:
+def decode_access_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.PyJWTError:
@@ -167,6 +167,7 @@ def require_role(*required_roles):
     支持可变参数 require_role("admin", "salesman") 或传列表 require_role(["admin", "salesman"])。"""
     from fastapi import Depends
     from sqlalchemy.orm import Session
+
     from database import get_db
 
     if len(required_roles) == 1 and isinstance(required_roles[0], (list, tuple, set)):

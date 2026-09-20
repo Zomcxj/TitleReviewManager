@@ -12,7 +12,6 @@
     文件名来自客户端，`../../etc/passwd` 这类输入必须拦截。
 """
 import os
-from typing import Optional
 
 # 各扩展名允许的文件头（magic bytes）
 # 说明：docx/xlsx 等 OOXML 是 zip 容器，文件头为 PK\x03\x04；
@@ -30,7 +29,7 @@ _MAGIC_PREFIXES = {
 _HEADER_READ_BYTES = 16
 
 
-def validate_file_content(filename: str, content: bytes) -> Optional[str]:
+def validate_file_content(filename: str, content: bytes) -> str | None:
     """按扩展名校验文件真实内容，合法返回 None，非法返回中文原因。
 
     未知扩展名（不在白名单映射中）不做内容校验，由扩展名白名单负责拦截。
@@ -95,6 +94,5 @@ def is_safe_relative_path(rel_path: str) -> bool:
     if normalized.startswith("/") or ":" in normalized.split("/")[0]:
         return False  # 绝对路径或盘符
     parts = [p for p in normalized.split("/") if p not in ("", ".")]
-    if any(p == ".." for p in parts):
-        return False
-    return True
+    # 含 .. 说明试图越出存储根目录
+    return not any(p == ".." for p in parts)

@@ -8,13 +8,13 @@
 底层实现见 tasks/backup.py；自动备份由 utils/scheduler.py 每天定时执行。
 恢复步骤见 tasks/backup.py 模块 docstring 与 .env.example。
 """
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import Optional
 
-from database import get_db
 from auth import require_role
+from database import get_db
 from tasks import backup as backup_task
 from utils.audit_logger import manual_audit_log
 
@@ -26,7 +26,7 @@ class BackupRunRequest(BaseModel):
 
     include_files 为 None 时沿用 BACKUP_INCLUDE_FILES 配置。
     """
-    include_files: Optional[bool] = None
+    include_files: bool | None = None
 
 
 def _log(db: Session, user: dict, action: str, new_value=None, request: Request = None):

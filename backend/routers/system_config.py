@@ -7,15 +7,16 @@
 
 底层读写由 utils/system_config.py 提供（带短 TTL 缓存）。
 """
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
-from typing import Any, Dict
 
-from database import get_db
 from auth import require_role
+from database import get_db
 from enums import DEFAULT_SYSTEM_CONFIG
-from utils.system_config import get_all_config, set_config
 from utils.audit_logger import manual_audit_log
+from utils.system_config import get_all_config, set_config
 
 router = APIRouter(prefix="/api/system-config", tags=["系统配置"])
 
@@ -44,7 +45,7 @@ async def list_config(
 
 @router.put("/")
 async def update_config(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     request: Request,
     db: Session = Depends(get_db),
     user: dict = Depends(require_role("admin")),

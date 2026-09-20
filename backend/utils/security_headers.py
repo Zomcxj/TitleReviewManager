@@ -79,11 +79,10 @@ class HttpsRedirectMiddleware(BaseHTTPMiddleware):
         if os.getenv("FORCE_HTTPS", "0") not in ("0", "false", "False"):
             from utils.request_context import is_https_request
             path = request.url.path
-            if not any(path.startswith(p) for p in self.EXEMPT_PREFIXES):
-                if not is_https_request(request):
-                    # 保留原始 host 与查询串，跳转到 https
-                    host = request.headers.get("host", "")
-                    url = request.url.replace(scheme="https", netloc=host)
-                    from starlette.responses import RedirectResponse
-                    return RedirectResponse(url=str(url), status_code=301)
+            if not any(path.startswith(p) for p in self.EXEMPT_PREFIXES) and not is_https_request(request):
+                # 保留原始 host 与查询串，跳转到 https
+                host = request.headers.get("host", "")
+                url = request.url.replace(scheme="https", netloc=host)
+                from starlette.responses import RedirectResponse
+                return RedirectResponse(url=str(url), status_code=301)
         return await call_next(request)

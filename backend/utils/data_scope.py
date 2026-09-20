@@ -8,7 +8,7 @@
 
 这里统一成一个可复用的检查函数，新增查询接口时直接调用即可。
 """
-from typing import Optional
+
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -26,14 +26,14 @@ def get_application_or_404(db: Session, application_id: int) -> Application:
     return app
 
 
-def get_customer_of_application(db: Session, app: Application) -> Optional[Customer]:
+def get_customer_of_application(db: Session, app: Application) -> Customer | None:
     """取批次所属客户"""
     if not app or not app.customer_id:
         return None
     return db.query(Customer).filter(Customer.id == app.customer_id).first()
 
 
-def assert_can_access_customer(user: dict, customer: Optional[Customer], action: str = "查看") -> None:
+def assert_can_access_customer(user: dict, customer: Customer | None, action: str = "查看") -> None:
     """校验当前用户是否有权访问该客户的数据。
 
     规则：

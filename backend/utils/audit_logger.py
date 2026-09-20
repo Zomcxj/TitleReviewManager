@@ -1,7 +1,8 @@
+
 from fastapi import Request
 from sqlalchemy.orm import Session
+
 from models import OperationLog
-from typing import Optional
 
 
 def manual_audit_log(
@@ -10,10 +11,10 @@ def manual_audit_log(
     username: str,
     action: str,
     resource_type: str,
-    resource_id: Optional[int],
-    old_value: Optional[dict] = None,
-    new_value: Optional[dict] = None,
-    request: Optional[Request] = None,
+    resource_id: int | None,
+    old_value: dict | None = None,
+    new_value: dict | None = None,
+    request: Request | None = None,
 ):
     """手动记录审计日志。只加入会话，随调用方的事务一起提交，避免打断/回滚主业务。"""
     from main import logger

@@ -11,14 +11,14 @@
 - **不记录敏感信息**：前端上报前会过滤，后端再做一次长度限制
 """
 import logging
-from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from auth import decode_access_token, get_current_user
 from database import get_db
 from models import ClientError, User
-from auth import get_current_user, decode_access_token
 from utils.request_context import get_client_ip
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,8 @@ MAX_REPORTS_PER_WINDOW = 30
 
 class ClientErrorReport(BaseModel):
     message: str = Field(..., max_length=MAX_MESSAGE_LEN)
-    stack: Optional[str] = Field(None, max_length=MAX_STACK_LEN)
-    url: Optional[str] = Field(None, max_length=500)
+    stack: str | None = Field(None, max_length=MAX_STACK_LEN)
+    url: str | None = Field(None, max_length=500)
 
 
 def _try_identify_user(request: Request, db: Session):

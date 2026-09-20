@@ -1,9 +1,8 @@
-from sqlalchemy import (
-    UniqueConstraint,
-    Column, Integer, String, Text, DateTime, ForeignKey, Boolean, JSON, Numeric
-)
-from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy.orm import relationship
+
 from database import Base
 from enums import ApplicationStatus, AuditStatus
 

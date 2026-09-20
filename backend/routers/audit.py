@@ -1,18 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
-from starlette.background import BackgroundTask
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
-from database import get_db
-from models import OperationLog
-from schemas import OperationLogListResponse
-from datetime import datetime
-from typing import Optional
-from auth import get_current_user
 import json
 import os
 import tempfile
+from contextlib import suppress
+from datetime import datetime
 from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
+
+from auth import get_current_user
+from database import get_db
+from models import OperationLog
+from schemas import OperationLogListResponse
 
 router = APIRouter(prefix="/api/audit", tags=["审计日志"])
 
@@ -36,10 +38,8 @@ EXPORT_HEADERS = [
 
 
 def _safe_remove(path):
-    try:
+    with suppress(OSError):
         os.remove(path)
-    except OSError:
-        pass
 
 
 def _iter_file(path, chunk_size=STREAM_CHUNK_SIZE):
@@ -57,11 +57,11 @@ def _iter_file(path, chunk_size=STREAM_CHUNK_SIZE):
 
 def _build_log_query(
     db: Session,
-    action: Optional[str],
-    resource_type: Optional[str],
-    username: Optional[str],
-    start_date: Optional[datetime],
-    end_date: Optional[datetime],
+    action: str | None,
+    resource_type: str | None,
+    username: str | None,
+    start_date: datetime | None,
+    end_date: datetime | None,
 ):
     """按筛选条件构造审计日志查询（列表接口与导出接口共用，保证口径一致）。"""
     query = db.query(OperationLog)
@@ -82,11 +82,11 @@ def _build_log_query(
 
 @router.get("/export")
 async def export_operation_logs(
-    action: Optional[str] = None,
-    resource_type: Optional[str] = None,
-    username: Optional[str] = None,
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
+    action: str | None = None,
+    resource_type: str | None = None,
+    username: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -198,11 +198,11 @@ async def export_operation_logs(
 async def get_operation_logs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    action: Optional[str] = None,
-    resource_type: Optional[str] = None,
-    username: Optional[str] = None,
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
+    action: str | None = None,
+    resource_type: str | None = None,
+    username: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):

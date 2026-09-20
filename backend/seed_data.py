@@ -1,7 +1,8 @@
-from database import SessionLocal
-from models import Customer, User, OperationLog, Application
-from datetime import datetime, timezone, timedelta
 import random
+from datetime import datetime, timedelta, timezone
+
+from database import SessionLocal
+from models import Application, Customer, OperationLog, User
 
 db = SessionLocal()
 
@@ -53,7 +54,7 @@ db.commit()
 print(f"已生成{len(customers)}条客户和申请数据")
 
 logs = []
-for i in range(50):
+for _ in range(50):
     log = OperationLog(
         user_id=random.choice([1,2,3]),
         username=f"user{random.randint(1,3)}",

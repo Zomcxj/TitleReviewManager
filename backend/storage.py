@@ -2,9 +2,10 @@
 存储抽象层 —— 支持本地文件系统和 NAS（SMB）两种后端。
 通过环境变量 STORAGE_BACKEND=local|smb 切换，生产环境可配 NAS 路径。
 """
-import os, shutil, uuid, logging, json
-from typing import Optional, List, Dict
-from pathlib import Path
+import json
+import logging
+import os
+import uuid
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -23,8 +24,10 @@ def _log_file_action(action: str, path: str, detail: str = ""):
         }, ensure_ascii=False)
         with open(_FILE_AUDIT_LOG, "a", encoding="utf-8") as f:
             f.write(entry + "\n")
-    except Exception:
-        pass
+    except Exception as e:
+        # 审计日志写入失败不能中断文件操作，但必须留下痕迹：
+        # 静默 pass 会让审计链断裂而无人知晓（合规风险）。
+        logger.warning(f"文件审计日志写入失败（操作 {action} / {path}）: {e}")
 
 # 配置：通过环境变量注入
 STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "local")  # local | smb
@@ -123,7 +126,7 @@ def save_file(customer_rel: str, category: str, filename: str, content: bytes) -
     return rel_path
 
 
-def read_file(rel_path: str) -> Optional[bytes]:
+def read_file(rel_path: str) -> bytes | None:
     """读取文件（拒绝越出存储根的相对路径）"""
     from utils.upload_guard import is_safe_relative_path
     if not is_safe_relative_path(rel_path):
@@ -152,7 +155,7 @@ def delete_file(rel_path: str) -> bool:
     return False
 
 
-def list_files(customer_rel: str) -> List[Dict]:
+def list_files(customer_rel: str) -> list[dict]:
     """
     遍历客户目录，返回文件树。
     返回结构:
@@ -225,7 +228,7 @@ _GB2312_PINYIN_RANGES = [
 ]
 
 
-def _char_to_initial(char: str) -> Optional[str]:
+def _char_to_initial(char: str) -> str | None:
     """汉字 -> 拼音首字母；GB2312 之外的生僻字返回 None"""
     try:
         code = int.from_bytes(char.encode("gb2312"), "big")

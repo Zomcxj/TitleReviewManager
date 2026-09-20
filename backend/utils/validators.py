@@ -6,14 +6,13 @@ ISO 7064:1983 MOD 11-2 算法计算。校验位错误说明号码录入有误，
 在生产环境（真实客户数据）必须拦截，否则后续报送机构会因信息错误被退回。
 """
 from datetime import datetime
-from typing import Optional
 
 # 加权因子与校验码映射（GB 11643-1999）
 _WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
 _CHECK_CODES = ["1", "0", "X", "9", "8", "7", "6", "5", "4", "3", "2"]
 
 
-def validate_id_number(id_number: str) -> Optional[str]:
+def validate_id_number(id_number: str) -> str | None:
     """
     校验 18 位身份证号，合法返回 None，非法返回错误说明。
 
@@ -67,7 +66,7 @@ def normalize_id_number(id_number: str) -> str:
     return (id_number or "").strip().upper()
 
 
-def validate_phone(phone: Optional[str]) -> Optional[str]:
+def validate_phone(phone: str | None) -> str | None:
     """校验手机号（可为空），非法返回错误说明"""
     if not phone:
         return None
@@ -86,7 +85,7 @@ WEAK_PASSWORDS = {
 }
 
 
-def check_password_strength(password: str, min_length: int = 8) -> Optional[str]:
+def check_password_strength(password: str, min_length: int = 8) -> str | None:
     """检查密码强度，合格返回 None，否则返回中文原因。
 
     规则（面向内部管理系统的合理强度）：

@@ -1,17 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+import uuid
+from contextlib import suppress
+from io import BytesIO
+from urllib.parse import quote
+
+from docx import Document
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Cm, Pt
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
-from database import get_db
-from models import Customer, Application, OperationLog
+
 from auth import get_current_user
+from database import get_db
+from models import Application, Customer, OperationLog
 from storage import get_pinyin_initial
-import uuid
-from urllib.parse import quote
-from docx import Document
-from docx.shared import Pt, Cm
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
-from io import BytesIO
 
 router = APIRouter(prefix="/api/word-import", tags=["Word导入"])
 
@@ -133,7 +136,7 @@ async def parse_word(
     try:
         doc = Document(BytesIO(content))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"文件解析失败：{str(e)}")
+        raise HTTPException(status_code=400, detail=f"文件解析失败：{str(e)}") from e
 
     tables = doc.tables
     if len(tables) < 1:
@@ -169,10 +172,9 @@ async def parse_word(
     years_str = data.get("工作年限", "")
     professional_years = None
     if years_str:
-        try:
+        # 解析失败保持 None（字段非必填，格式不规范不应中断导入）
+        with suppress(ValueError):
             professional_years = int(years_str.replace("年", "").strip())
-        except ValueError:
-            pass
 
     # 解析第二个表格（项目经历）
     projects = []

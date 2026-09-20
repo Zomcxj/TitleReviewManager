@@ -1,17 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
-from fastapi.responses import StreamingResponse
-from starlette.background import BackgroundTask
-from sqlalchemy.orm import Session
-from sqlalchemy import or_
-from database import get_db
-from models import Customer, Application, OperationLog
-from auth import get_current_user
-from utils.masking import mask_id_number, mask_phone
-from datetime import datetime
-import openpyxl
 import os
 import tempfile
+from contextlib import suppress
+from datetime import datetime
 from io import BytesIO
+
+import openpyxl
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
+
+from auth import get_current_user
+from database import get_db
+from models import Application, Customer, OperationLog
+from utils.masking import mask_id_number, mask_phone
 
 router = APIRouter(prefix="/api/exports", tags=["数据导出"])
 
@@ -54,10 +57,8 @@ def _set_column_widths(ws, widths):
 
 
 def _safe_remove(path):
-    try:
+    with suppress(OSError):
         os.remove(path)
-    except OSError:
-        pass
 
 
 def _iter_file(path, chunk_size=STREAM_CHUNK_SIZE):

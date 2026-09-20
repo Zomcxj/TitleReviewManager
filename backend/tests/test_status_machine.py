@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from enums import VALID_TRANSITIONS, ApplicationStatus
 
-
 VALID_ID = "110101199001010015"
 
 

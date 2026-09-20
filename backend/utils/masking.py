@@ -11,10 +11,9 @@
     姓名    陈明辉              → 陈**（保留姓氏）
     邮箱    zhangsan@a.com     → zh***@a.com
 """
-from typing import Optional
 
 
-def mask_id_number(value: Optional[str]) -> str:
+def mask_id_number(value: str | None) -> str:
     """身份证号脱敏：保留前 6 位与后 4 位。
 
     前 6 位是地区码（便于核对归属），后 4 位便于人工比对，中间出生日期打码。
@@ -32,7 +31,7 @@ def mask_id_number(value: Optional[str]) -> str:
     return "*" * len(v)
 
 
-def mask_phone(value: Optional[str]) -> str:
+def mask_phone(value: str | None) -> str:
     """手机号脱敏：保留前 3 后 4（138****8001）"""
     if not value:
         return ""
@@ -44,7 +43,7 @@ def mask_phone(value: Optional[str]) -> str:
     return "*" * len(v)
 
 
-def mask_name(value: Optional[str]) -> str:
+def mask_name(value: str | None) -> str:
     """姓名脱敏：保留姓氏（陈明辉 → 陈**）"""
     if not value:
         return ""
@@ -54,7 +53,7 @@ def mask_name(value: Optional[str]) -> str:
     return v[0] + "*" * (len(v) - 1)
 
 
-def mask_email(value: Optional[str]) -> str:
+def mask_email(value: str | None) -> str:
     """邮箱脱敏：保留首字符与域名（zhangsan@a.com → z***@a.com）"""
     if not value or "@" not in value:
         return value or ""
@@ -64,7 +63,7 @@ def mask_email(value: Optional[str]) -> str:
     return f"{local[0]}***@{domain}"
 
 
-def mask_id_number_keep_tail4(value: Optional[str]) -> str:
+def mask_id_number_keep_tail4(value: str | None) -> str:
     """仅保留身份证后 4 位（用于"已存在"类提示，不暴露地区与生日）"""
     if not value:
         return ""

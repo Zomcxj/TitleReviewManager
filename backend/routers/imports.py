@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from io import BytesIO
+
+import openpyxl
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
+
+from auth import get_current_user
 from database import get_db
 from models import Customer, OperationLog
-from auth import get_current_user
 from storage import get_pinyin_initial
-import openpyxl
-from io import BytesIO
 
 router = APIRouter(prefix="/api/imports", tags=["批量导入"])
 

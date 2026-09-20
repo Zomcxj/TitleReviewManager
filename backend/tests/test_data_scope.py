@@ -6,8 +6,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-import models
 import auth
+import models
 
 VALID_ID_A = "110101199001010015"
 VALID_ID_B = "110101199001010023"

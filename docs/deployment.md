@@ -87,11 +87,16 @@ export NAS_ROOT="/data/nas"          # 存储根目录
 
 ```bash
 cd frontend
+npm install
 npm run build
 # 构建产出在 frontend/dist/
 ```
 
 将 `dist/` 部署到 Nginx，并配置反向代理到后端 `/api/`。
+
+> `frontend/dist` **不纳入版本控制**（每次构建文件名带 hash，提交它只会产生大量
+> 无意义的 diff）。因此克隆仓库后必须先构建前端；`start.bat` / `start.sh` 会在
+> 检测到 dist 缺失或源码更新时自动构建，无需手工干预。
 
 ### 4. 后端启动（生产）
 
@@ -141,10 +146,19 @@ environment:
 ## 测试
 
 ```bash
-# 后端 API 测试（自动启动/停止服务器）
-cd tests
-python test_storage.py
-python test_users.py
+cd backend
+python -m pytest          # 全部用例（使用临时库，不触碰开发库）
+
+cd frontend
+npm test                  # Vitest
+npm run lint              # ESLint（仅 error 级为门禁）
+```
+
+### 代码质量门禁
+
+```bash
+cd backend
+ruff check .              # 规则集见 backend/ruff.toml
 ```
 
 ---
@@ -257,8 +271,22 @@ docker compose exec backend alembic upgrade head
 
 迁移使用 batch 模式兼容 SQLite；生产 PostgreSQL 为原生 ALTER。
 
-> 注意：应用启动时还有一层 `schema_sync` 兜底（只加表/加列/加索引，绝不删改），
-> 用于「代码已更新但忘记跑迁移」的场景。正式变更仍应生成 Alembic 迁移。
+> **schema 权威只有 Alembic 一条路径。** 应用启动时不再执行任何 DDL，
+> 只做一次只读的漂移检测并在发现差异时打日志（`utils/schema_sync.py`）。
+>
+> 此前启动钩子会 `create_all` 建表并自动补列/补索引，导致「库结构是谁改的」
+> 无法追溯，也掩盖了迁移链本身的缺陷（初始迁移曾漏建
+> `applications.cycle_deadline` 索引，被自动补索引长期掩盖）。该兜底已移除。
+>
+> 若历史库是用 `create_all` 建出来的（本地 `start.bat` 路径，没有 alembic
+> 版本记录），直接 `alembic upgrade head` 会报 `table already exists` 而失败。
+> 用 `python db_bootstrap.py` 处理：它会先 `stamp head` 把现有结构标记为最新，
+> 再执行迁移补齐差异。Docker 启动命令与两个启动脚本都已改为走这条路径。
+>
+> 注意 `stamp head` 意味着「现有结构已达最新」，因此这类库里若缺了后来新增的
+> 列/索引，迁移链不会补。bootstrap 结束时会把差异打印出来；确认无误后可用
+> `python db_bootstrap.py --repair` 显式补齐缺失的列与索引（只增不删，不动既有数据）。
+> **默认不带 `--repair` 时全程只读** —— 不会在启动时静默改结构。
 
 ### 5. 定时任务
 
@@ -294,6 +322,31 @@ BACKUP_COMPRESS="1"         # 是否 gzip 压缩
 
 #### 恢复步骤
 
+推荐用内置的恢复工具（`backend/tasks/restore.py`），它会做校验并防止误覆盖：
+
+```bash
+cd backend
+
+# 1. 查看有哪些备份
+python tasks/restore.py --list
+
+# 2. 校验备份完整性（gzip 可解、PRAGMA integrity_check、外键检查）
+python tasks/restore.py --verify <时间戳>
+
+# 3. 恢复演练：在临时位置完整走一遍恢复并校验数据可读
+#    全程不接触生产库与生产材料目录 —— 先演练再恢复
+python tasks/restore.py --drill <时间戳>
+
+# 4. 真正恢复（会先停服务；默认拒绝覆盖已存在的库文件）
+python tasks/restore.py --restore-db <时间戳>
+python tasks/restore.py --restore-files <时间戳>
+```
+
+**每次备份成功后，调度器会自动做一次恢复演练**（`BACKUP_DRILL_ENABLED=0` 可关闭），
+结果记在备份 manifest 的 `restore_drill` 字段 —— 备份是否真的可用不再靠假设。
+
+手工恢复（无 Python 环境时）：
+
 ```bash
 # 1. 停止服务（避免恢复过程中仍有写入）
 docker compose stop backend
@@ -313,6 +366,11 @@ tar -xzf files_<时间戳>.tar.gz -C <存储根目录>
 docker compose start backend
 ```
 
+> SQLite 备份使用 `sqlite3.Connection.backup()` 做一致性快照，**不是**直接复制文件
+> —— 后者在有写入时可能拷到损坏的库。
+>
+> 备份失败会向所有管理员发送站内通知（此前只写日志，等于失败被静默吞掉）。
+>
 > PostgreSQL 环境需要容器内可执行 `pg_dump`（Dockerfile 已安装 postgresql-client）。
 > 外部 cron 方式：`BACKUP_ENABLED=0` 关闭内置，改为 `python tasks/backup.py`。
 
@@ -381,10 +439,10 @@ PUBLIC_URL="https://your-domain.com"
 
 | 任务 | 内容 |
 |------|------|
-| backend-security | `pip-audit` 扫依赖 CVE + `bandit` 静态安全分析 |
-| frontend-security | `npm audit`（high/critical 失败） |
-| backend-tests | 运行 pytest |
-| migration-check | 从零执行全部迁移并校验表完整性 |
+| backend-security | `pip-audit` 扫依赖 CVE + `bandit` 静态安全分析 + `ruff check` |
+| frontend-security | `npm audit`（high/critical 失败）+ `eslint src --quiet` |
+| backend-tests | pytest（Python 3.10 与 3.12 双版本矩阵；3.12 额外跑废弃告警门禁） |
+| migration-check | 从零执行全部迁移并校验表完整性；另测 create_all 历史库的接管路径 |
 
 触发时机：push / PR 到 main、每周一自动扫描、可手动触发。
 
@@ -392,7 +450,8 @@ PUBLIC_URL="https://your-domain.com"
 
 ```bash
 cd backend
-pip install pip-audit bandit
+pip install pip-audit bandit ruff
 pip-audit -r requirements.txt --desc on
 bandit -r . -ll -x tests,alembic --skip B101,B603,B607
+ruff check .
 ```

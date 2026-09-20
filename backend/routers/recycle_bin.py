@@ -5,15 +5,15 @@
 - 恢复（is_deleted=False, deleted_at=None）
 - 彻底删除（物理删除，带关联约束校验）
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.orm import Session
 from datetime import datetime
-from pydantic import BaseModel
-from typing import Optional
 
-from database import get_db
-from models import Customer, Application, User, Material, Review, Feedback, PaymentRecord
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
 from auth import require_role
+from database import get_db
+from models import Application, Customer, Feedback, Material, PaymentRecord, Review, User
 from utils.audit_logger import manual_audit_log
 
 router = APIRouter(prefix="/api/recycle-bin", tags=["回收站"])
@@ -88,7 +88,7 @@ def _user_item(u: User) -> dict:
 
 @router.get("/")
 async def list_recycle_bin(
-    resource_type: Optional[str] = Query(None),
+    resource_type: str | None = Query(None),
     db: Session = Depends(get_db),
     user: dict = Depends(require_role("admin")),
 ):

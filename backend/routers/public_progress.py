@@ -7,7 +7,6 @@
 4. 响应体只包含进度信息，绝不返回身份证号 / 手机号 / 工作单位等敏感字段。
 """
 
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -50,7 +49,7 @@ class ProgressQuery(BaseModel):
     phone_tail: str = Field(..., min_length=1, max_length=10)
 
 
-def build_progress_steps(current_status: Optional[str]) -> List[dict]:
+def build_progress_steps(current_status: str | None) -> list[dict]:
     """按固定顺序生成阶段完成情况。"""
     current_index = STATUS_TO_STAGE_INDEX.get(current_status or "", 0)
     return [
@@ -73,7 +72,7 @@ def build_materials_summary(db: Session, application_id: int) -> dict:
     return summary
 
 
-def build_latest_feedback(db: Session, application_id: int) -> Optional[str]:
+def build_latest_feedback(db: Session, application_id: int) -> str | None:
     """最近一条机构反馈内容（无则 None）。"""
     feedback = (
         db.query(Feedback)

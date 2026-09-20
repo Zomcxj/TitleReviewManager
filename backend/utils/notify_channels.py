@@ -10,15 +10,15 @@
 - 邮件用标准库 smtplib（不引入新依赖），Webhook 用标准库 urllib
 - 支持开关与最小发送级别（只推重要类型，避免轰炸）
 """
-import os
 import json
-import smtplib
 import logging
+import os
+import smtplib
 import threading
-from email.mime.text import MIMEText
 from email.header import Header
-from typing import Optional
-from urllib.request import Request as UrlRequest, urlopen
+from email.mime.text import MIMEText
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def _send_webhook(payload: dict) -> bool:
         return False
 
 
-def _dispatch(notify_type: str, title: str, content: str, email: Optional[str]) -> None:
+def _dispatch(notify_type: str, title: str, content: str, email: str | None) -> None:
     """实际发送逻辑（在后台线程中执行）"""
     if email:
         _send_email(email, title, content)
@@ -124,7 +124,7 @@ def notify_external(
     notify_type: str,
     title: str,
     content: str,
-    email: Optional[str] = None,
+    email: str | None = None,
     background: bool = True,
 ) -> None:
     """

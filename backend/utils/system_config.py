@@ -6,12 +6,14 @@
 带短 TTL 缓存，避免每个请求都查库。
 """
 import time
-from typing import Any, Dict
+from typing import Any
+
 from sqlalchemy.orm import Session
+
 from enums import DEFAULT_SYSTEM_CONFIG, SYSTEM_CONFIG_LABELS
 
 _CACHE_TTL_SECONDS = 5
-_cache: Dict[str, Any] = {}
+_cache: dict[str, Any] = {}
 _cache_at: float = 0.0
 
 
@@ -29,7 +31,7 @@ def _coerce(raw: str, default: Any) -> Any:
     return raw
 
 
-def _load(db: Session) -> Dict[str, Any]:
+def _load(db: Session) -> dict[str, Any]:
     global _cache, _cache_at
     now = time.time()
     if _cache and now - _cache_at < _CACHE_TTL_SECONDS:
@@ -54,7 +56,7 @@ def get_config(db: Session, key: str) -> Any:
     return _load(db).get(key, DEFAULT_SYSTEM_CONFIG.get(key))
 
 
-def get_all_config(db: Session) -> Dict[str, Any]:
+def get_all_config(db: Session) -> dict[str, Any]:
     """读取全部配置项（含中文标签，供管理界面展示）"""
     values = dict(_load(db))
     return {
