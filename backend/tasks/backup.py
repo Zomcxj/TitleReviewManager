@@ -54,6 +54,7 @@ import sqlite3
 import subprocess
 import tarfile
 import time
+from contextlib import suppress
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -241,10 +242,8 @@ def _backup_sqlite(dest_dir: str, timestamp: str) -> tuple:
     except Exception as e:
         logger.warning(f"SQLite backup API 不可用（{e}），退化为文件复制，可能存在一致性风险")
         if os.path.exists(raw_dest):
-            try:
+            with suppress(OSError):
                 os.remove(raw_dest)
-            except OSError:
-                pass
         shutil.copy2(src, raw_dest)
 
     size = os.path.getsize(raw_dest)
@@ -289,18 +288,18 @@ def _backup_postgres(dest_dir: str, timestamp: str) -> tuple:
                 # Windows 下 pg_dump 是 exe，列表参数无需 shell，避免注入与转义问题
                 shell=False,
             )
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         if os.path.exists(raw_dest):
             os.remove(raw_dest)
         raise RuntimeError(
             "未找到 pg_dump 可执行文件。请安装 postgresql-client 或在容器内执行"
             "（Debian/Ubuntu: apt-get install postgresql-client；"
             "Alpine: apk add postgresql-client；Dockerfile 中请加入该包）"
-        )
+        ) from e
     except OSError as e:
         if os.path.exists(raw_dest):
             os.remove(raw_dest)
-        raise RuntimeError(f"调用 pg_dump 失败: {e}")
+        raise RuntimeError(f"调用 pg_dump 失败: {e}") from e
 
     if proc.returncode != 0:
         stderr = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
@@ -374,7 +373,7 @@ def _write_manifest(dest_dir: str, timestamp: str, data: dict) -> str:
 def _read_manifest(path: str):
     """读取 manifest，损坏时返回 None（不影响其他备份的展示）"""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else None
     except Exception as e:
@@ -455,6 +454,49 @@ def _cleanup_old(dest_dir: str, keep: int) -> list:
 
 
 # ---------------------------------------------------------------- 主流程
+def _notify_backup_failure(result: dict) -> None:
+    """备份失败时通知管理员。
+
+    此前备份失败只写日志 —— 日志没人看，等于失败被静默吞掉。备份是「数据全丢」
+    与「没事发生」之间唯一的防线，失败必须让人知道。
+
+    通知走站内 + 外部渠道（若已配置），失败只记日志，绝不影响备份流程本身。
+    """
+    try:
+        from database import SessionLocal
+        from models import User
+        from routers.notifications import create_notification
+
+        error = result.get("error") or "未知原因"
+        title = "自动备份失败"
+        content = (
+            f"时间点 {result.get('timestamp')} 的自动备份失败：{error}。"
+            "请尽快检查备份目录磁盘空间与数据库连接，备份失效意味着数据无法恢复。"
+        )
+
+        db = SessionLocal()
+        try:
+            admins = db.query(User).filter(
+                User.role == "admin", User.is_deleted == False  # noqa: E712
+            ).all()
+            for admin in admins:
+                create_notification(
+                    db=db, user_id=admin.id, title=title, content=content,
+                    type="backup_failed", related_type="backup",
+                    related_id=None,
+                )
+            db.commit()
+            logger.info(f"备份失败告警已通知 {len(admins)} 位管理员")
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    except Exception as e:
+        # 告警本身失败不能反过来影响备份结果
+        logger.error(f"发送备份失败告警时出错: {e}", exc_info=True)
+
+
 def run_backup(include_files: bool = None) -> dict:
     """执行一次完整备份（数据库 + 可选材料文件）。
 
@@ -577,6 +619,13 @@ def run_backup(include_files: bool = None) -> dict:
         )
     else:
         logger.error(f"备份失败: {result['error']}")
+        # 失败必须让人知道：日志没人主动看，告警才能促成处理。
+        # 告警调用本身也包一层：run_backup 的契约是「绝不抛异常」，
+        # 不能因为告警通道出问题就击穿这个契约。
+        try:
+            _notify_backup_failure(result)
+        except Exception as e:
+            logger.error(f"备份失败告警发送异常: {e}", exc_info=True)
     return result
 
 
@@ -629,13 +678,12 @@ def _last_success_date():
     """
     marker = os.path.join(get_backup_dir(), _MARKER_NAME)
     if os.path.exists(marker):
-        try:
-            with open(marker, "r", encoding="utf-8") as f:
+        # 标记文件读不到时回落到扫描 manifest，不影响判断
+        with suppress(OSError):
+            with open(marker, encoding="utf-8") as f:
                 value = f.read().strip()
             if value:
                 return value
-        except OSError:
-            pass
     last = last_backup_time(success_only=True)
     return last.strftime("%Y-%m-%d") if last else None
 
@@ -652,9 +700,8 @@ def should_run_now(now: datetime = None) -> bool:
     now = now or _now()
     if now.hour != get_hour():
         return False
-    if _last_success_date() == now.strftime("%Y-%m-%d"):
-        return False
-    return True
+    # 今天已成功备份过则不重复执行（失败不写标记，因此当天仍可重试）
+    return _last_success_date() != now.strftime("%Y-%m-%d")
 
 
 if __name__ == "__main__":

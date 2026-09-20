@@ -12,12 +12,12 @@ cron 手动调用，部署时极易遗漏 —— 结果就是「自动回收」�
 注意：这是"够用"的方案。若后续任务量增大或需要精确调度，
 建议换成独立 worker（Celery / APScheduler 持久化作业存储）。
 """
-import os
-import time
 import logging
-import threading
+import os
 import tempfile
-from datetime import datetime
+import threading
+import time
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +38,10 @@ def _acquire_lock() -> bool:
     """基于文件时间戳的简易跨进程锁"""
     try:
         now = time.time()
-        if os.path.exists(_LOCK_FILE):
-            if now - os.path.getmtime(_LOCK_FILE) < _LOCK_TTL_SECONDS:
-                return False
+        if os.path.exists(_LOCK_FILE) and now - os.path.getmtime(_LOCK_FILE) < _LOCK_TTL_SECONDS:
+            return False
         with open(_LOCK_FILE, "w") as f:
-            f.write(f"{os.getpid()}@{datetime.utcnow().isoformat()}")
+            f.write(f"{os.getpid()}@{datetime.now(timezone.utc).isoformat()}")
         return True
     except Exception as e:
         logger.warning(f"调度锁获取失败（按可执行处理）: {e}")
@@ -71,6 +70,7 @@ def _maybe_run_backup(result: dict) -> None:
         result["backup"] = outcome
         if outcome.get("success"):
             logger.info(f"自动备份成功: {outcome.get('db_backup')}")
+            _maybe_run_restore_drill(result)
         else:
             # 备份失败降级为 warning，避免拖垮整个调度任务的健康状态
             result["warnings"].append(f"自动备份失败: {outcome.get('error')}")
@@ -78,6 +78,33 @@ def _maybe_run_backup(result: dict) -> None:
     except Exception as e:
         result["warnings"].append(f"自动备份异常: {e}")
         logger.error(f"自动备份异常: {e}", exc_info=True)
+
+
+def _maybe_run_restore_drill(result: dict) -> None:
+    """备份成功后顺带做一次恢复演练，验证这份备份真的可用。
+
+    「从没演练过恢复的备份等于没有备份」——备份文件的格式、路径、manifest 与
+    实际内容是否一致，只有真恢复一次才知道。演练在临时目录进行，不碰生产数据。
+
+    演练失败只记 warning，不影响备份本身的结果。
+    """
+    if os.getenv("BACKUP_DRILL_ENABLED", "1") in ("0", "false", "False"):
+        return
+    try:
+        from tasks import restore as restore_task
+        report = restore_task.drill()
+        result["restore_drill"] = {
+            "ok": report.get("ok"),
+            "row_counts": report.get("row_counts"),
+        }
+        if report.get("ok"):
+            logger.info(f"恢复演练通过: {report.get('row_counts')}")
+        else:
+            result["warnings"].append(f"恢复演练未通过: {report}")
+    except Exception as e:
+        # 演练失败意味着「这份备份可能恢复不了」，必须显式告警而不是静默
+        result["warnings"].append(f"恢复演练失败（备份可用性存疑）: {e}")
+        logger.error(f"恢复演练失败: {e}", exc_info=True)
 
 
 def run_once() -> dict:
