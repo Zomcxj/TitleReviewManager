@@ -12,6 +12,10 @@ pip-delete-this-directory.txt
 
 # Node
 node_modules/
+# 前端构建产物不入版本控制：每次构建文件名带 hash，提交 dist 会让每次功能改动
+# 都产生几十个无意义的二进制 diff（历史上有 12/22 次提交在改 dist）。
+# 构建请用 `npm run build`；start.bat / start.sh 会在 dist 缺失时自动构建。
+dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -53,6 +57,9 @@ backend/uploads/*
 # Build
 *.egg-info/
 .eggs/
+
+# 变更日志本地维护，不入版本控制（见 AGENTS.md）
+CHANGELOG.md
 
 # Screenshots / Test artifacts
 screenshots/

@@ -22,3 +22,6 @@ gunicorn>=21.2.0
 # 测试
 pytest>=8.0.0
 httpx>=0.25.0
+
+# 代码静态检查（CI 的 ruff check 步骤使用；规则集见 backend/ruff.toml）
+ruff>=0.6.0

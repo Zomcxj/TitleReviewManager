@@ -1,0 +1,43 @@
+# Ruff 配置 —— 后端静态检查
+#
+# 为什么只启用这几类规则：
+# 全量规则（如启用 E/W 全部）会让现有代码产生上百条纯格式告警，噪音淹没真问题。
+# 这里只挑「能发现真实缺陷」的规则集，目标是让检查结果可执行、不退化：
+#   F   pyflakes    —— 未使用导入/变量、未定义名字（含变量遮蔽导入）
+#   E9              —— 语法级错误（如 EOF in multi-line statement）
+#   I   isort       —— 导入顺序（统一风格，避免无关 diff）
+#   B   bugbear     —— 常见逻辑陷阱（可变默认参数、except 后丢失栈等）
+#   UP  pyupgrade   —— 已废弃写法（Optional[X] → X | None 等）
+#   C4  comprehensions —— 不必要的 list/dict 生成式
+#   SIM simplify    —— 可简化的冗余写法
+#
+# 后续要收紧时，优先逐个评估新增规则对现有代码的影响，再决定是否加入 select。
+target-version = "py310"
+line-length = 120
+
+[lint]
+select = [
+    "F",    # pyflakes：真实缺陷
+    "E9",   # 语法错误
+    "I",    # 导入排序
+    "B",    # bugbear：逻辑陷阱
+    "UP",   # pyupgrade：废弃写法
+    "C4",   # 生成式简化
+    "SIM",  # 可简化写法
+]
+ignore = [
+    # B008：FastAPI 的 Depends()/Query() 必须写在默认参数里，这是框架要求而非缺陷
+    "B008",
+]
+
+[lint.per-file-ignores]
+# 测试文件允许「为断言而导入」与 setup 期的宽松写法
+"tests/*" = ["F401", "F841", "B011", "SIM117"]
+# 迁移脚本由 alembic autogenerate 生成，格式不强行统一
+"alembic/versions/*" = ["F401", "I001"]
+# seed 脚本里为可读性保留的中间变量
+"seed.py" = ["F841"]
+"seed_data.py" = ["F401"]
+
+[lint.isort]
+known-first-party = ["routers", "utils", "tasks", "models", "schemas", "enums", "database", "auth", "storage"]
