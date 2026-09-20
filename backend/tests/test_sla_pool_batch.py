@@ -3,12 +3,14 @@
 覆盖：SLA 自动回收（此前因 or_ 未导入而从未生效）、软删除过滤、
 批量操作条数上限与频率限制。
 """
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 from fastapi.testclient import TestClient
 
-import models
 import auth
+import models
+from utils.timeutil import utcnow
 
 VALID_ID = "110101199001010015"
 
@@ -45,8 +47,8 @@ class TestSlaRecovery:
 
     def test_long_untouched_customer_recovered(self, db, pool_salesman):
         """超过回收天数未跟进的客户应被回收"""
-        from tasks.sla_scheduler import check_and_recovery_customers, POOL_RECOVERY_DAYS
-        old = datetime.utcnow() - timedelta(days=POOL_RECOVERY_DAYS + 3)
+        from tasks.sla_scheduler import POOL_RECOVERY_DAYS, check_and_recovery_customers
+        old = utcnow() - timedelta(days=POOL_RECOVERY_DAYS + 3)
         c = models.Customer(name="久未跟进", id_number=VALID_ID, phone="13800138001",
                             assigned_salesman_id=pool_salesman.id, name_pinyin="JW",
                             last_follow_up_at=old, created_at=old)
@@ -59,8 +61,8 @@ class TestSlaRecovery:
 
     def test_soft_deleted_customer_skipped(self, db, pool_salesman):
         """已软删除的客户不应被 SLA 任务处理"""
-        from tasks.sla_scheduler import check_and_recovery_customers, POOL_RECOVERY_DAYS
-        old = datetime.utcnow() - timedelta(days=POOL_RECOVERY_DAYS + 3)
+        from tasks.sla_scheduler import POOL_RECOVERY_DAYS, check_and_recovery_customers
+        old = utcnow() - timedelta(days=POOL_RECOVERY_DAYS + 3)
         c = models.Customer(name="已删除", id_number=VALID_ID, phone="13800138001",
                             assigned_salesman_id=pool_salesman.id, name_pinyin="YSC",
                             last_follow_up_at=old, created_at=old, is_deleted=True)
@@ -75,7 +77,7 @@ class TestSlaRecovery:
         from tasks.sla_scheduler import check_sla_deadlines
         c = models.Customer(name="超时客户", id_number=VALID_ID, phone="13800138001",
                             assigned_salesman_id=pool_salesman.id, name_pinyin="CS",
-                            sla_deadline=datetime.utcnow() - timedelta(hours=1))
+                            sla_deadline=utcnow() - timedelta(hours=1))
         db.add(c)
         db.commit()
         check_sla_deadlines()
@@ -86,7 +88,7 @@ class TestSlaRecovery:
 class TestPublicPool:
     def test_claim_respects_limit(self, client, db, pool_salesman):
         """领取公海客户受持有上限约束"""
-        from utils.system_config import set_config, invalidate_cache
+        from utils.system_config import invalidate_cache, set_config
         set_config(db, "pool_claim_limit", 1)
         invalidate_cache()
         # 已有 1 个非公海客户
@@ -95,7 +97,7 @@ class TestPublicPool:
                                is_public=False))
         # 公海里 1 个
         p = models.Customer(name="公海", id_number="110101199001010023", phone="13800138002",
-                            name_pinyin="GH", is_public=True, public_at=datetime.utcnow())
+                            name_pinyin="GH", is_public=True, public_at=utcnow())
         db.add(p)
         db.commit()
         _login(client, "pool_s", "pass1234")
@@ -104,11 +106,11 @@ class TestPublicPool:
         assert "最多持有" in r.json()["detail"]
 
     def test_claim_sets_sla_deadline(self, client, db, pool_salesman):
-        from utils.system_config import set_config, invalidate_cache
+        from utils.system_config import invalidate_cache, set_config
         set_config(db, "pool_claim_limit", 50)
         invalidate_cache()
         p = models.Customer(name="可领", id_number=VALID_ID, phone="13800138001",
-                            name_pinyin="KL", is_public=True, public_at=datetime.utcnow())
+                            name_pinyin="KL", is_public=True, public_at=utcnow())
         db.add(p)
         db.commit()
         _login(client, "pool_s", "pass1234")
@@ -156,7 +158,7 @@ class TestBatchGuards:
                         json={"customer_ids": [c.id], "salesman_id": pool_salesman.id})
         assert r.status_code == 200
         db.refresh(c)
-        assert c.sla_deadline > datetime.utcnow(), "SLA 截止时间应在未来"
+        assert c.sla_deadline > utcnow(), "SLA 截止时间应在未来"
 
     def test_batch_requires_admin(self, client, db, test_salesman, pool_salesman):
         _login(client, "testsalesman", "salespassword")

@@ -1,15 +1,19 @@
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from database import get_db
-from models import User, Customer
-from schemas import UserResponse, UserCreate, UserUpdate, PasswordChange
+
 from auth import (
-    get_current_user, hash_password, verify_password,
-    create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES,
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    create_access_token,
+    get_current_user,
+    hash_password,
+    verify_password,
 )
-from typing import List
-from datetime import datetime
+from database import get_db
+from models import Customer, User
+from schemas import PasswordChange, UserCreate, UserResponse, UserUpdate
+from utils.timeutil import utcnow
 
 router = APIRouter(prefix="/api/users", tags=["用户管理"])
 
@@ -19,7 +23,7 @@ def admin_only(user: dict):
         raise HTTPException(status_code=403, detail="仅管理员可操作")
 
 
-@router.get("/", response_model=List[UserResponse])
+@router.get("/", response_model=list[UserResponse])
 async def list_users(request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
     admin_only(user)
@@ -70,9 +74,12 @@ async def update_user(user_id: int, data: UserUpdate, request: Request, db: Sess
     if "password" in upd:
         # 明文密码 pop 出来单独 hash，避免 setattr 循环把明文写入 User.password
         upd["password_hash"] = hash_password(upd.pop("password"))
-    if "username" in upd and upd["username"] != u.username:
-        if db.query(User).filter(User.username == upd["username"]).first():
-            raise HTTPException(status_code=400, detail="用户名已存在")
+    if (
+        "username" in upd
+        and upd["username"] != u.username
+        and db.query(User).filter(User.username == upd["username"]).first()
+    ):
+        raise HTTPException(status_code=400, detail="用户名已存在")
     for k, v in upd.items():
         setattr(u, k, v)
     db.commit()
@@ -111,7 +118,7 @@ async def change_password(data: PasswordChange, request: Request, db: Session = 
     u.password_hash = hash_password(data.new_password)
     # 改密成功后解除强制改密标记，并记录改密时间（供密码有效期策略使用）
     u.must_change_password = False
-    u.password_changed_at = datetime.utcnow()
+    u.password_changed_at = utcnow()
     # 自增 token 版本：其他设备上的旧 token 立即失效（改密后必须重新登录）
     u.token_version = (u.token_version or 0) + 1
     db.commit()
@@ -151,7 +158,7 @@ async def reset_user_password(user_id: int, data: dict, request: Request, db: Se
     target.password_hash = hash_password(new_password)
     # 管理员重置的密码属于临时口令，要求该用户下次登录后自行修改
     target.must_change_password = True
-    target.password_changed_at = datetime.utcnow()
+    target.password_changed_at = utcnow()
     # 使目标用户已登录的会话立即失效
     target.token_version = (target.token_version or 0) + 1
     db.commit()

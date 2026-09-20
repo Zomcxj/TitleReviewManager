@@ -1,19 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from datetime import timedelta
+
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
-from database import get_db
-from models import Customer, Application, User, OperationLog
+
 from auth import get_current_user, require_role
-from datetime import datetime, timedelta
-from routers.notifications import create_notification
+from database import get_db
+from models import Application, Customer, OperationLog, User
 from routers.applications import build_material_checklist
-from typing import List
+from routers.notifications import create_notification
+from utils.timeutil import utcnow
 
 router = APIRouter(prefix="/api/batch", tags=["批量操作"])
 
 
 @router.post("/assign-customers")
 async def batch_assign_customers(
-    customer_ids: List[int] = Body(..., embed=True),
+    customer_ids: list[int] = Body(..., embed=True),
     salesman_id: int = Body(..., embed=True),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
@@ -21,7 +23,7 @@ async def batch_assign_customers(
     if current_user.get("role") not in ["admin"]:
         raise HTTPException(status_code=403, detail="只有管理员可以批量分配客户")
 
-    from utils.batch_guard import validate_batch_ids, check_batch_rate_limit
+    from utils.batch_guard import check_batch_rate_limit, validate_batch_ids
     customer_ids = validate_batch_ids(customer_ids, "客户")
     check_batch_rate_limit(db, current_user, "assign-customers")
 
@@ -36,7 +38,7 @@ async def batch_assign_customers(
             old_salesman_id = customer.assigned_salesman_id
             customer.assigned_salesman_id = salesman_id
             customer.is_public = False
-            customer.sla_deadline = datetime.utcnow() + timedelta(hours=24)
+            customer.sla_deadline = utcnow() + timedelta(hours=24)
             updated_count += 1
             
             if old_salesman_id and old_salesman_id != salesman_id:
@@ -66,19 +68,19 @@ async def batch_assign_customers(
 
 @router.post("/review-batch")
 async def batch_review(
-    application_ids: List[int] = Body(..., embed=True),
+    application_ids: list[int] = Body(..., embed=True),
     status: str = Body(..., embed=True),
     description: str = Body(None, embed=True),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    from models import Review
     from enums import VALID_TRANSITIONS
+    from models import Review
     
     if current_user.get("role") not in ["reviewer", "admin"]:
         raise HTTPException(status_code=403, detail="只有审核员可以批量审核")
 
-    from utils.batch_guard import validate_batch_ids, check_batch_rate_limit
+    from utils.batch_guard import check_batch_rate_limit, validate_batch_ids
     application_ids = validate_batch_ids(application_ids, "申报批次")
     check_batch_rate_limit(db, current_user, "review-batch")
 
@@ -123,14 +125,14 @@ async def batch_review(
 
 @router.post("/release-customers")
 async def batch_release_customers(
-    customer_ids: List[int] = Body(..., embed=True),
+    customer_ids: list[int] = Body(..., embed=True),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     if current_user.get("role") not in ["admin"]:
         raise HTTPException(status_code=403, detail="只有管理员可以批量释放")
 
-    from utils.batch_guard import validate_batch_ids, check_batch_rate_limit
+    from utils.batch_guard import check_batch_rate_limit, validate_batch_ids
     customer_ids = validate_batch_ids(customer_ids, "客户")
     check_batch_rate_limit(db, current_user, "release-customers")
 
@@ -141,7 +143,7 @@ async def batch_release_customers(
             old_salesman_id = customer.assigned_salesman_id
             customer.assigned_salesman_id = None
             customer.is_public = True
-            customer.public_at = datetime.utcnow()
+            customer.public_at = utcnow()
             updated_count += 1
             
             if old_salesman_id:
@@ -169,7 +171,7 @@ def _skip(application_id: int, batch_number, reason: str) -> dict:
 
 @router.post("/submit-to-institution")
 async def batch_submit_to_institution(
-    application_ids: List[int] = Body(..., embed=True),
+    application_ids: list[int] = Body(..., embed=True),
     institution_name: str = Body("", embed=True),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_role("admin", "salesman")),
@@ -213,10 +215,10 @@ async def batch_submit_to_institution(
             continue
 
         app.status = target_status
-        app.submitted_at = datetime.utcnow()
+        app.submitted_at = utcnow()
         app.institution_name = institution_name
         if not app.cycle_year:
-            app.cycle_year = datetime.utcnow().year
+            app.cycle_year = utcnow().year
 
         db.add(OperationLog(
             user_id=user_id,
@@ -263,7 +265,7 @@ async def batch_submit_to_institution(
 
 @router.post("/remind")
 async def batch_remind(
-    application_ids: List[int] = Body(..., embed=True),
+    application_ids: list[int] = Body(..., embed=True),
     message: str = Body("", embed=True),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_role("admin", "salesman")),

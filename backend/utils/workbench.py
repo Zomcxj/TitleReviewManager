@@ -5,7 +5,6 @@
 待办接口。看板此前只有统计数字，业务员/审核员打开后不知道今天该先处理谁。
 """
 from datetime import datetime, timedelta
-from typing import Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -14,7 +13,7 @@ from enums import ApplicationStatus, AuditStatus, PaymentStatus
 from models import Application, Customer, Material, User
 from utils.follow_up_schedule import get_pending_follow_ups
 from utils.system_config import get_config
-
+from utils.timeutil import utcnow
 
 PENDING_REVIEW_STATUSES = (
     ApplicationStatus.COMPLETED.value,
@@ -32,17 +31,17 @@ IN_PROGRESS_STATUSES = (
 )
 
 
-def _naive(dt: Optional[datetime]) -> Optional[datetime]:
+def _naive(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
-def _user_id(user: dict) -> Optional[int]:
+def _user_id(user: dict) -> int | None:
     return (user or {}).get("user_id") or (user or {}).get("id")
 
 
-def _hours_overdue(deadline: Optional[datetime], now: datetime) -> Optional[float]:
+def _hours_overdue(deadline: datetime | None, now: datetime) -> float | None:
     due = _naive(deadline)
     if not due:
         return None
@@ -51,7 +50,7 @@ def _hours_overdue(deadline: Optional[datetime], now: datetime) -> Optional[floa
     return hours if hours > 0 else 0.0
 
 
-def _hours_remaining(deadline: Optional[datetime], now: datetime) -> Optional[float]:
+def _hours_remaining(deadline: datetime | None, now: datetime) -> float | None:
     due = _naive(deadline)
     if not due:
         return None
@@ -79,7 +78,7 @@ def _pending_material_counts(db: Session, application_ids: list[int]) -> dict[in
         .group_by(Material.application_id)
         .all()
     )
-    return {app_id: count for app_id, count in rows}
+    return dict(rows)
 
 
 def _salesman_names(db: Session, ids: set[int]) -> dict[int, str]:
@@ -93,7 +92,7 @@ def _salesman_names(db: Session, ids: set[int]) -> dict[int, str]:
 def list_pending_reviews(
     db: Session,
     user: dict,
-    status: Optional[str] = None,
+    status: str | None = None,
     limit: int = 100,
 ) -> dict:
     """内部待审核队列。
@@ -101,7 +100,7 @@ def list_pending_reviews(
     口径：批次处于「完成资料 / 资料补充 / 二次申报」，且存在待审核材料。
     审核员/管理员看全部；业务员只看名下客户（便于对照退回补件进度）。
     """
-    now = datetime.utcnow()
+    now = utcnow()
     query = (
         db.query(Application, Customer)
         .join(Customer, Customer.id == Application.customer_id)
@@ -166,7 +165,7 @@ def list_upcoming_deadlines(
     limit: int = 50,
 ) -> dict:
     """申报截止：已逾期 + 未来 N 天内，排除终态。"""
-    now = datetime.utcnow()
+    now = utcnow()
     until = now + timedelta(days=days)
     query = (
         db.query(Application, Customer)
@@ -280,7 +279,7 @@ def get_workbench(db: Session, user: dict) -> dict:
 
     return {
         "role": role,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utcnow().isoformat(),
         "summary": summary,
         "follow_ups": follow_ups["items"][:20],
         "reviews": reviews["items"],
@@ -298,7 +297,7 @@ def mark_review_sla_started(db: Session, app: Application) -> None:
         hours = int(hours)
     except (TypeError, ValueError):
         hours = 48
-    app.review_sla_deadline = datetime.utcnow() + timedelta(hours=max(hours, 1))
+    app.review_sla_deadline = utcnow() + timedelta(hours=max(hours, 1))
 
 
 def clear_review_sla(app: Application) -> None:

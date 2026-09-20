@@ -1,24 +1,26 @@
+import uuid
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from database import get_db
-from models import Application, Customer, Material, OperationLog, User
-from schemas import ApplicationUpdate, ApplicationResponse
-from enums import VALID_TRANSITIONS, required_materials_for
+
 from auth import get_current_user
-from datetime import datetime
-from typing import Optional
-import uuid
+from database import get_db
+from enums import VALID_TRANSITIONS, required_materials_for
+from models import Application, Customer, Material, OperationLog, User
 from routers.notifications import create_notification
+from schemas import ApplicationResponse, ApplicationUpdate
+from utils.timeutil import utcnow
 
 router = APIRouter(prefix="/api/applications", tags=["申报管理"])
 
 
 class ApplicationCycleUpdate(BaseModel):
     """申报周期设置（字段均可选，只更新传入项）"""
-    cycle_year: Optional[int] = None
-    cycle_deadline: Optional[datetime] = None
+    cycle_year: int | None = None
+    cycle_deadline: datetime | None = None
 
 
 def build_material_checklist(db: Session, app: Application) -> dict:
@@ -33,7 +35,7 @@ def build_material_checklist(db: Session, app: Application) -> dict:
         .group_by(Material.category)
         .all()
     )
-    counts = {category: count for category, count in rows}
+    counts = dict(rows)
 
     required = [
         {
@@ -117,9 +119,9 @@ async def update_application(
         elif role not in ("salesman", "admin"):
             raise HTTPException(status_code=403, detail="该状态变更需要业务员操作")
         if new_status == "提交评审机构审核":
-            app.submitted_at = datetime.utcnow()
+            app.submitted_at = utcnow()
         app.status = new_status
-        from utils.workbench import mark_review_sla_started, clear_review_sla
+        from utils.workbench import clear_review_sla, mark_review_sla_started
         if new_status == "完成资料":
             mark_review_sla_started(db, app)
         elif new_status not in ("完成资料", "资料补充", "二次申报"):
@@ -283,12 +285,12 @@ async def submit_to_institution(
     old_status = app.status
     app.status = "提交评审机构审核"
     app.institution_name = institution_name
-    app.submitted_at = datetime.utcnow()
+    app.submitted_at = utcnow()
     from utils.workbench import clear_review_sla
     clear_review_sla(app)
     # 申报年度兜底：未设置时落到当前年份
     if not app.cycle_year:
-        app.cycle_year = datetime.utcnow().year
+        app.cycle_year = utcnow().year
     log = OperationLog(
         user_id=user.get("user_id") or user.get("id"),
         username=user.get("username", ""),
@@ -421,7 +423,7 @@ async def revert_application_status(
     if target in ("完成资料", "资料补充", "初次申报", "二次申报"):
         app.submitted_at = None
         app.institution_name = None
-    from utils.workbench import mark_review_sla_started, clear_review_sla
+    from utils.workbench import clear_review_sla, mark_review_sla_started
     if target == "完成资料":
         mark_review_sla_started(db, app)
     elif target not in ("完成资料", "资料补充", "二次申报"):

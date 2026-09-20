@@ -11,18 +11,20 @@
 """
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+
 from sqlalchemy.orm import Session
+
+from utils.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
     """统一使用 naive UTC，与模型默认值保持一致"""
-    return datetime.utcnow()
+    return utcnow()
 
 
-def _as_naive(dt: Optional[datetime]) -> Optional[datetime]:
+def _as_naive(dt: datetime | None) -> datetime | None:
     """数据库可能返回 aware 时间（PostgreSQL），统一转 naive 便于比较"""
     if dt is None:
         return None
@@ -32,6 +34,7 @@ def _as_naive(dt: Optional[datetime]) -> Optional[datetime]:
 def check_ip_rate_limit(db: Session, ip: str, max_attempts: int, window_seconds: int) -> None:
     """按 IP 限流：窗口内尝试次数超限则拒绝"""
     from fastapi import HTTPException
+
     from models import LoginAttempt
 
     since = _now() - timedelta(seconds=window_seconds)
@@ -66,6 +69,7 @@ def record_attempt(db: Session, ip: str) -> None:
 def check_account_lock(db: Session, username: str) -> None:
     """账号锁定检查：仍在锁定期内则拒绝"""
     from fastapi import HTTPException
+
     from models import AccountLock
 
     lock = db.query(AccountLock).filter(AccountLock.username == username).first()

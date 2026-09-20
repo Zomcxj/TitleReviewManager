@@ -3,10 +3,12 @@
 待办接口将散落的跟进、审核、截止、回款汇总成按角色过滤的 dashboard，
 并验证调度器能否正确触发三类运营催办通知。
 """
-import pytest
-from fastapi.testclient import TestClient
 from datetime import datetime, timedelta
 
+import pytest
+from fastapi.testclient import TestClient
+
+from utils.timeutil import utcnow
 
 VALID_ID = "110101199001010015"
 
@@ -59,7 +61,7 @@ class TestWorkbench:
     def test_workbench_overdue_follow_ups(self, client, db, test_salesman):
         import models
         c = _make_customer(db, test_salesman.id, "逾期跟进客户")
-        overdue = datetime.utcnow() - timedelta(days=2)
+        overdue = utcnow() - timedelta(days=2)
         db.add(models.FollowUp(
             customer_id=c.id, user_id=test_salesman.id,
             next_follow_up_at=overdue, content="测试跟进",
@@ -92,7 +94,7 @@ class TestWorkbench:
     def test_workbench_upcoming_deadlines(self, client, db, test_salesman):
         import models
         c = _make_customer(db, test_salesman.id, "截止客户")
-        soon = datetime.utcnow() + timedelta(days=3)
+        soon = utcnow() + timedelta(days=3)
         app = _make_app(db, c.id, "完成资料", "WBDEAD")
         app.cycle_deadline = soon
         db.commit()
@@ -182,7 +184,7 @@ class TestReminders:
         import models
         c = _make_customer(db, test_salesman.id, "材料已全审")
         app = _make_app(db, c.id, "完成资料", "NOSLA")
-        app.review_sla_deadline = datetime.utcnow() - timedelta(hours=5)
+        app.review_sla_deadline = utcnow() - timedelta(hours=5)
         db.add(models.Material(
             application_id=app.id, category="身份证明",
             filename="done.pdf", file_path="t/done.pdf", file_size=1,

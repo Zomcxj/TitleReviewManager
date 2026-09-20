@@ -4,12 +4,14 @@
 """
 import io
 import zipfile
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 from fastapi.testclient import TestClient
 
-import models
 import auth
+import models
+from utils.timeutil import utcnow
 
 VALID_ID = "110101199001010015"
 
@@ -33,7 +35,7 @@ def fixture_biz_data(db, biz_salesman):
     db.commit()
     a = models.Application(customer_id=c.id, professional_category="建筑工程",
                            batch_number="B-BIZ", status="提交评审机构审核",
-                           submitted_at=datetime.utcnow())
+                           submitted_at=utcnow())
     db.add(a)
     db.commit()
     m1 = models.Material(application_id=a.id, category="身份证明", filename="id.pdf",
@@ -49,7 +51,7 @@ def fixture_biz_data(db, biz_salesman):
                          issue_type="材料缺失", description="缺盖章"))
     db.add(models.FollowUp(customer_id=c.id, user_id=biz_salesman.id, content="首次联系",
                            follow_up_type="phone",
-                           next_follow_up_at=datetime.utcnow() - timedelta(days=2)))
+                           next_follow_up_at=utcnow() - timedelta(days=2)))
     db.commit()
     return c, a, m1, m2
 
@@ -176,7 +178,7 @@ class TestConversionFunnel:
 class TestBatchDownload:
     def test_zip_with_real_files(self, client, db, biz_salesman):
         """用真实文件验证打包（材料写入 NAS 存储根）"""
-        from storage import save_file, customer_dir
+        from storage import customer_dir, save_file
         c = models.Customer(name="Zip客户", id_number=VALID_ID, phone="13800138001",
                             assigned_salesman_id=biz_salesman.id, name_pinyin="ZIP")
         db.add(c)
@@ -205,7 +207,7 @@ class TestBatchDownload:
         assert b"%PDF" in zf.read([n for n in names if n.endswith(".pdf")][0])
 
     def test_zip_category_filter(self, client, db, biz_salesman):
-        from storage import save_file, customer_dir
+        from storage import customer_dir, save_file
         c = models.Customer(name="过滤客户", id_number=VALID_ID, phone="13800138001",
                             assigned_salesman_id=biz_salesman.id, name_pinyin="GL")
         db.add(c)

@@ -10,22 +10,24 @@
   * 维护类（A2/A3/A6）admin 全量，salesman 仅限自己名下客户
   * 删除回款（A4）、财务总览（A5）仅 admin
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.orm import Session
-from sqlalchemy import func
 from datetime import datetime
 from decimal import Decimal
 
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from auth import get_current_user, require_role
 from database import get_db
-from models import Application, Customer, User, PaymentRecord
+from enums import CertificateStatus, PaymentStatus
+from models import Application, Customer, PaymentRecord, User
 from schemas import (
     ApplicationFinanceUpdate,
     PaymentRecordCreate,
     PaymentRecordResponse,
 )
-from auth import get_current_user, require_role
-from enums import PaymentStatus, CertificateStatus
 from utils.audit_logger import manual_audit_log
+from utils.timeutil import utcnow
 
 router = APIRouter(prefix="/api/finance", tags=["收费与证书"])
 
@@ -145,18 +147,16 @@ async def update_application_finance(
         if updates.get(nullable_forbidden) is None:
             updates.pop(nullable_forbidden, None)
 
-    if "payment_status" in updates:
-        if updates["payment_status"] not in PAYMENT_STATUS_VALUES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"无效的收费状态，可选：{PAYMENT_STATUS_VALUES}",
-            )
-    if "certificate_status" in updates:
-        if updates["certificate_status"] not in CERTIFICATE_STATUS_VALUES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"无效的证书状态，可选：{CERTIFICATE_STATUS_VALUES}",
-            )
+    if "payment_status" in updates and updates["payment_status"] not in PAYMENT_STATUS_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效的收费状态，可选：{PAYMENT_STATUS_VALUES}",
+        )
+    if "certificate_status" in updates and updates["certificate_status"] not in CERTIFICATE_STATUS_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"无效的证书状态，可选：{CERTIFICATE_STATUS_VALUES}",
+        )
 
     old_value = {}
     new_value = {}
@@ -201,7 +201,7 @@ async def create_payment(
     record = PaymentRecord(
         application_id=app.id,
         amount=data.amount,
-        paid_at=data.paid_at or datetime.utcnow(),
+        paid_at=data.paid_at or utcnow(),
         method=data.method,
         remark=data.remark,
         created_by_id=user.get("id"),
@@ -318,7 +318,7 @@ async def finance_summary(
         entry["total_paid"] += paid
 
     # 补齐业务员姓名
-    sids = [sid for sid in salesman_agg.keys() if sid is not None]
+    sids = [sid for sid in salesman_agg if sid is not None]
     name_map = {}
     if sids:
         for u in db.query(User).filter(User.id.in_(sids)).all():

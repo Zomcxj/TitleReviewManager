@@ -10,12 +10,13 @@
 """
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict
+
+from utils.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
 
-def _naive(dt: Optional[datetime]) -> Optional[datetime]:
+def _naive(dt: datetime | None) -> datetime | None:
     """统一为 naive UTC，避免 aware/naive 比较报错"""
     if dt is None:
         return None
@@ -26,7 +27,7 @@ def get_pending_follow_ups(
     db,
     user: dict,
     scope: str = "today",
-) -> Dict[str, List[Dict]]:
+) -> dict[str, list[dict]]:
     """查询待跟进日程。
 
     scope:
@@ -40,9 +41,10 @@ def get_pending_follow_ups(
     只有**最新一条**的 next_follow_up_at 才代表当前待办，因此按客户取最新记录。
     """
     from sqlalchemy import func
-    from models import FollowUp, Customer
 
-    now = datetime.utcnow()
+    from models import Customer, FollowUp
+
+    now = utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
 
@@ -89,7 +91,7 @@ def get_pending_follow_ups(
     for fu, customer in rows:
         due = _naive(fu.next_follow_up_at)
         phone = customer.phone
-        from utils.masking import should_mask_customer, mask_phone
+        from utils.masking import mask_phone, should_mask_customer
         if should_mask_customer(user, customer):
             phone = mask_phone(phone)
         items.append({
@@ -108,7 +110,7 @@ def get_pending_follow_ups(
     return {"items": items, "total": len(items), "scope": scope}
 
 
-def get_follow_up_summary(db, user: dict) -> Dict:
+def get_follow_up_summary(db, user: dict) -> dict:
     """待跟进汇总（用于工作台卡片）"""
     overdue = get_pending_follow_ups(db, user, "overdue")
     today = get_pending_follow_ups(db, user, "today")
@@ -125,10 +127,10 @@ def send_overdue_follow_up_reminders(db) -> int:
 
     返回发送的提醒条数。
     """
-    from models import FollowUp, Customer, Notification, User
+    from models import Customer, FollowUp, Notification
     from routers.notifications import create_notification
 
-    now = datetime.utcnow()
+    now = utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     from sqlalchemy import func

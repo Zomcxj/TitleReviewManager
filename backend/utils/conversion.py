@@ -13,24 +13,26 @@
 每阶段给出数量与相对上一阶段的转化率，并标出流失最多的环节。
 """
 import logging
-from datetime import datetime, timedelta
-from typing import Optional, Dict
+from datetime import timedelta
+
+from utils.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
 
-def get_conversion_funnel(db, days: Optional[int] = 180, salesman_id: Optional[int] = None) -> Dict:
+def get_conversion_funnel(db, days: int | None = 180, salesman_id: int | None = None) -> dict:
     """计算申报转化漏斗。
 
     按**客户**口径统计（一个客户可能有多批次，取其在漏斗中最靠后的阶段）。
     """
-    from sqlalchemy import func, distinct
-    from models import Customer, Application, Material
+    from sqlalchemy import distinct
+
     from enums import ApplicationStatus
+    from models import Application, Customer, Material
 
     since = None
     if days:
-        since = datetime.utcnow() - timedelta(days=days)
+        since = utcnow() - timedelta(days=days)
 
     # 1. 建档：符合条件的客户
     cust_q = db.query(Customer).filter(Customer.is_deleted == False)  # noqa: E712
@@ -110,7 +112,8 @@ def get_conversion_funnel(db, days: Optional[int] = 180, salesman_id: Optional[i
 
     stages = []
     prev = None
-    for name, cnt in zip(names, stages_count):
+    # names 与 stages_count 长度必须一致（同一处定义），strict=True 让不一致直接报错
+    for name, cnt in zip(names, stages_count, strict=True):
         stages.append({
             "name": name,
             "count": cnt,

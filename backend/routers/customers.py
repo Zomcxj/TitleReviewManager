@@ -1,22 +1,27 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Body, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
-from database import get_db
-from models import Customer, Application, User, Material, OperationLog
-from schemas import (
-    CustomerCreate, CustomerUpdate, CustomerResponse,
-    ApplicationResponse,
-)
-from auth import get_current_user, require_role
-from enums import CustomerSource
-from datetime import datetime, timezone
 import asyncio
 import logging
 import uuid
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session
+
+from auth import get_current_user, require_role
+from database import get_db
+from enums import CustomerSource
+from models import Application, Customer, Material, OperationLog, User
+from routers.notifications import create_notification
+from schemas import (
+    ApplicationResponse,
+    CustomerCreate,
+    CustomerResponse,
+    CustomerUpdate,
+)
+from storage import create_customer_directories, customer_dir, get_pinyin_initial, rename_customer_directory
 from utils.audit_logger import manual_audit_log
 from utils.system_config import get_config
-from storage import get_pinyin_initial, create_customer_directories, customer_dir, rename_customer_directory
-from routers.notifications import create_notification
+from utils.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +64,7 @@ def _duplicate_phone_error(db: Session, phone: str, exclude_customer_id: int = N
 
 def _sync_customer_directory(db: Session, customer: Customer, old_name: str, old_pinyin: str, old_salesman_username: str = ""):
     """客户改名/换业务员后同步 NAS 目录：重命名目录并修正该客户材料的 file_path 前缀。"""
-    year = customer.created_at.year if customer.created_at else datetime.utcnow().year
+    year = customer.created_at.year if customer.created_at else utcnow().year
     old_rel = customer_dir(
         year=year,
         salesman_name=old_salesman_username or "未分配",
@@ -264,7 +269,7 @@ async def create_customer(
     # 创建 NAS 目录模板
     salesman = db.query(User).filter(User.id == customer.assigned_salesman_id).first() if customer.assigned_salesman_id else None
     create_customer_directories(
-        year=customer.created_at.year if customer.created_at else datetime.utcnow().year,
+        year=customer.created_at.year if customer.created_at else utcnow().year,
         salesman_name=salesman.username if salesman else "未分配",
         customer_name=customer.name,
         initial=customer.name_pinyin or get_pinyin_initial(customer.name),
@@ -420,7 +425,7 @@ async def delete_customer(
     if any(app.status in REVIEW_STAGE_STATUSES for app in applications):
         raise HTTPException(status_code=400, detail="该客户存在评审中的批次，无法删除")
 
-    now = datetime.utcnow()
+    now = utcnow()
     customer.is_deleted = True
     customer.deleted_at = now
     # 释放客户归属，避免软删除记录仍占用归属/公海统计

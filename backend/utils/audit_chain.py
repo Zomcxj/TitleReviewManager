@@ -20,7 +20,9 @@ import hashlib
 import json
 import logging
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Any
+
+from utils.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +44,14 @@ def _normalize(value: Any) -> str:
 
 def compute_entry_hash(
     prev_hash: str,
-    user_id: Optional[int],
-    username: Optional[str],
+    user_id: int | None,
+    username: str | None,
     action: str,
     resource_type: str,
-    resource_id: Optional[int],
+    resource_id: int | None,
     old_value: Any,
     new_value: Any,
-    ip_address: Optional[str],
+    ip_address: str | None,
     created_at: datetime,
 ) -> str:
     """计算单条日志的链式哈希。
@@ -113,11 +115,11 @@ def chain_log_entry(entry) -> None:
         old_value=entry.old_value,
         new_value=entry.new_value,
         ip_address=entry.ip_address,
-        created_at=entry.created_at or datetime.utcnow(),
+        created_at=entry.created_at or utcnow(),
     )
 
 
-def verify_chain(db, limit: Optional[int] = None) -> Dict[str, Any]:
+def verify_chain(db, limit: int | None = None) -> dict[str, Any]:
     """校验审计日志链完整性。
 
     返回：
@@ -134,7 +136,7 @@ def verify_chain(db, limit: Optional[int] = None) -> Dict[str, Any]:
     query = db.query(OperationLog).order_by(OperationLog.id.asc())
     if limit:
         query = query.limit(limit)
-    entries: List[OperationLog] = query.all()
+    entries: list[OperationLog] = query.all()
 
     result = {"valid": True, "checked": 0, "broken_at": [], "reason": None, "unchained": 0}
     expected_prev = GENESIS_HASH
@@ -237,6 +239,7 @@ def register_chain_hook() -> None:
     """
     from sqlalchemy import event
     from sqlalchemy.orm import Session
+
     from models import OperationLog
 
     @event.listens_for(Session, "before_flush")

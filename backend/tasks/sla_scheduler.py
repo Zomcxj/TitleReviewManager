@@ -6,13 +6,16 @@ SLA 时效管理定时任务
 - 发送即将超时提醒
 """
 
+import logging
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import func
+
 from database import get_db
 from models import Customer, Notification
-from sqlalchemy import func
-from datetime import datetime, timezone, timedelta
 from routers.notifications import create_notification
 from utils.system_config import get_config
-import logging
+from utils.timeutil import utcnow
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,7 +34,7 @@ def check_and_recovery_customers():
     try:
         # 回收天数运行时读系统配置，模块级常量仅作兜底默认值
         recovery_days = get_config(db, "pool_recovery_days") or POOL_RECOVERY_DAYS
-        threshold = datetime.utcnow() - timedelta(days=recovery_days)
+        threshold = utcnow() - timedelta(days=recovery_days)
         
         # 用 coalesce 以创建时间兜底，避免新建客户（从未跟进）被立刻误回收
         overdue_customers = db.query(Customer).filter(
@@ -46,7 +49,7 @@ def check_and_recovery_customers():
             
             customer.assigned_salesman_id = None
             customer.is_public = True
-            customer.public_at = datetime.utcnow()
+            customer.public_at = utcnow()
             
             if salesman_id:
                 create_notification(
@@ -75,7 +78,7 @@ def check_sla_deadlines():
     """检查 SLA 截止时间"""
     db = next(get_db())
     try:
-        now = datetime.utcnow()
+        now = utcnow()
         
         expired = db.query(Customer).filter(
             Customer.sla_deadline < now,
@@ -113,7 +116,7 @@ def send_expiring_reminders():
     """发送即将超时提醒（12 小时窗口内去重）"""
     db = next(get_db())
     try:
-        now = datetime.utcnow()
+        now = utcnow()
         twelve_hours_later = now + timedelta(hours=12)
         # 通知 created_at 以 aware UTC 写入，去重比较需使用 aware 时间
         dedup_since = datetime.now(timezone.utc) - timedelta(hours=12)

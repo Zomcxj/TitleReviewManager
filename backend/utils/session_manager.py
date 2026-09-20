@@ -12,13 +12,14 @@
 """
 import logging
 import re
-from datetime import datetime, timedelta
-from typing import Optional, List, Dict
+from datetime import timedelta
+
+from utils.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
 
-def parse_device_label(user_agent: Optional[str]) -> str:
+def parse_device_label(user_agent: str | None) -> str:
     """从 User-Agent 粗略解析设备描述（不引入 UA 解析库，够用即可）。
 
     形如 "Chrome / Windows"、"Safari / iPhone"、"未知设备"。
@@ -65,16 +66,17 @@ def parse_device_label(user_agent: Optional[str]) -> str:
 def create_session(
     db,
     user_id: int,
-    ip_address: Optional[str],
-    user_agent: Optional[str],
+    ip_address: str | None,
+    user_agent: str | None,
     expires_minutes: int,
 ) -> str:
     """创建登录会话并返回 session_id"""
     import secrets
+
     from models import UserSession
 
     session_id = secrets.token_urlsafe(32)
-    now = datetime.utcnow()
+    now = utcnow()
     db.add(UserSession(
         session_id=session_id,
         user_id=user_id,
@@ -89,7 +91,7 @@ def create_session(
     return session_id
 
 
-def is_session_valid(db, session_id: Optional[str], user_id: int) -> bool:
+def is_session_valid(db, session_id: str | None, user_id: int) -> bool:
     """校验会话是否仍有效（存在、未撤销、未过期）。
 
     兼容历史 token（无 session_id）：返回 True，由 token_version 机制兜底，
@@ -107,12 +109,11 @@ def is_session_valid(db, session_id: Optional[str], user_id: int) -> bool:
         return False
     if session.revoked_at is not None:
         return False
-    if session.expires_at and session.expires_at < datetime.utcnow():
-        return False
-    return True
+    # 已过期（expires_at 为空表示长期有效）
+    return not (session.expires_at and session.expires_at < utcnow())
 
 
-def touch_session(db, session_id: Optional[str]) -> None:
+def touch_session(db, session_id: str | None) -> None:
     """更新会话最近活跃时间（用于界面显示"最后活动"）。
 
     为降低写放大，仅在距上次更新超过 5 分钟时才写库。
@@ -124,18 +125,18 @@ def touch_session(db, session_id: Optional[str]) -> None:
     session = db.query(UserSession).filter(UserSession.session_id == session_id).first()
     if not session:
         return
-    now = datetime.utcnow()
+    now = utcnow()
     last = session.last_seen_at or session.created_at
     if last and (now - last).total_seconds() < 300:
         return
     session.last_seen_at = now
 
 
-def list_sessions(db, user_id: int, current_session_id: Optional[str] = None) -> List[Dict]:
+def list_sessions(db, user_id: int, current_session_id: str | None = None) -> list[dict]:
     """列出用户的活跃会话（未撤销、未过期），按最近活跃倒序"""
     from models import UserSession
 
-    now = datetime.utcnow()
+    now = utcnow()
     sessions = (
         db.query(UserSession)
         .filter(
@@ -170,12 +171,12 @@ def revoke_session(db, user_id: int, session_id: str) -> bool:
     ).first()
     if not session or session.revoked_at is not None:
         return False
-    session.revoked_at = datetime.utcnow()
+    session.revoked_at = utcnow()
     db.flush()
     return True
 
 
-def revoke_other_sessions(db, user_id: int, keep_session_id: Optional[str]) -> int:
+def revoke_other_sessions(db, user_id: int, keep_session_id: str | None) -> int:
     """撤销该用户除指定会话外的所有会话（改密时用：保留当前设备）"""
     from models import UserSession
 
@@ -185,7 +186,7 @@ def revoke_other_sessions(db, user_id: int, keep_session_id: Optional[str]) -> i
     )
     if keep_session_id:
         query = query.filter(UserSession.session_id != keep_session_id)
-    count = query.update({"revoked_at": datetime.utcnow()}, synchronize_session=False)
+    count = query.update({"revoked_at": utcnow()}, synchronize_session=False)
     db.flush()
     return count
 
@@ -194,7 +195,7 @@ def cleanup_expired_sessions(db, older_than_days: int = 30) -> int:
     """清理过期已久的会话记录，避免表无限增长"""
     from models import UserSession
 
-    cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+    cutoff = utcnow() - timedelta(days=older_than_days)
     deleted = db.query(UserSession).filter(UserSession.expires_at < cutoff).delete(
         synchronize_session=False
     )

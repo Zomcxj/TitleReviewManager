@@ -10,11 +10,12 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
+from enums import AuditStatus
 from models import Application, Customer, Material, Notification, User
 from routers.notifications import create_notification
-from enums import AuditStatus
 from utils.follow_up_schedule import send_overdue_follow_up_reminders
-from utils.workbench import PENDING_REVIEW_STATUSES, IN_PROGRESS_STATUSES, _naive
+from utils.timeutil import utcnow
+from utils.workbench import IN_PROGRESS_STATUSES, PENDING_REVIEW_STATUSES, _naive
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def send_review_sla_reminders(db: Session) -> int:
 
     只催仍有待审核材料的批次，避免材料已全部审完还反复提醒。
     """
-    now = datetime.utcnow()
+    now = utcnow()
     pending_app_ids = {
         row[0] for row in db.query(Material.application_id)
         .filter(Material.audit_status == AuditStatus.PENDING.value)
@@ -113,7 +114,7 @@ def send_review_sla_reminders(db: Session) -> int:
 
 def send_cycle_deadline_reminders(db: Session) -> int:
     """申报截止：已逾期或 3 天内到期，通知归属业务员 + 管理员。"""
-    now = datetime.utcnow()
+    now = utcnow()
     soon = now + timedelta(days=3)
     rows = (
         db.query(Application, Customer)

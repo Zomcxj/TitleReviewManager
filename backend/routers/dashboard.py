@@ -1,10 +1,13 @@
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
 from sqlalchemy import func
-from database import get_db
-from models import Customer, Application, User
+from sqlalchemy.orm import Session
+
 from auth import get_current_user
-from datetime import datetime, timedelta
+from database import get_db
+from models import Application, Customer, User
+from utils.timeutil import utcnow
 
 router = APIRouter(prefix="/api/dashboard", tags=["数据看板"])
 
@@ -28,7 +31,7 @@ async def get_dashboard_stats(
     
     total_applications = base_query.count()
     
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     today_new = base_query.filter(Application.created_at >= today).count()
     
     this_week_start = today - timedelta(days=today.weekday())
@@ -62,7 +65,7 @@ async def get_trend_data(
     if user_role == "salesman":
         base_query = base_query.join(Customer).filter(Customer.assigned_salesman_id == user_id)
     
-    end_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    end_date = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     start_date = end_date - timedelta(days=days - 1)
     
     daily_data = (

@@ -6,17 +6,18 @@
 就该在上传前重点检查），也能评估业务员材料准备质量。
 """
 import logging
-from datetime import datetime, timedelta
-from typing import Optional, Dict, List
+from datetime import timedelta
+
+from utils.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
 
 def get_rejection_stats(
     db,
-    days: Optional[int] = 90,
-    salesman_id: Optional[int] = None,
-) -> Dict:
+    days: int | None = 90,
+    salesman_id: int | None = None,
+) -> dict:
     """材料退回原因统计。
 
     Args:
@@ -35,11 +36,12 @@ def get_rejection_stats(
         }
     """
     from sqlalchemy import func
-    from models import Review, Material, Application, Customer, User
+
+    from models import Application, Customer, Material, Review, User
 
     since = None
     if days:
-        since = datetime.utcnow() - timedelta(days=days)
+        since = utcnow() - timedelta(days=days)
 
     # 基础查询：材料级审核记录（排除 application 级的批量审核记录）
     base = (
@@ -72,8 +74,8 @@ def get_rejection_stats(
     total_rejected = len(rejected_rows)
 
     # 按材料类别
-    cat_rejected: Dict[str, int] = {}
-    cat_total: Dict[str, int] = {}
+    cat_rejected: dict[str, int] = {}
+    cat_total: dict[str, int] = {}
     all_q = (
         db.query(Material.category, func.count(Review.id))
         .join(Material, Review.material_id == Material.id)
@@ -87,7 +89,7 @@ def get_rejection_stats(
         all_q = all_q.filter(Customer.assigned_salesman_id == salesman_id)
     for cat, cnt in all_q.group_by(Material.category).all():
         cat_total[cat] = cnt
-    for r, m, a, c in rejected_rows:
+    for _r, m, _a, _c in rejected_rows:
         cat_rejected[m.category] = cat_rejected.get(m.category, 0) + 1
 
     by_category = []
@@ -101,8 +103,8 @@ def get_rejection_stats(
         })
 
     # 按问题类型
-    issue_count: Dict[str, int] = {}
-    for r, m, a, c in rejected_rows:
+    issue_count: dict[str, int] = {}
+    for r, _m, _a, _c in rejected_rows:
         key = r.issue_type or "未分类"
         issue_count[key] = issue_count.get(key, 0) + 1
     by_issue_type = [
@@ -111,9 +113,9 @@ def get_rejection_stats(
     ]
 
     # 按业务员
-    sales_rejected: Dict[int, int] = {}
-    sales_total: Dict[int, int] = {}
-    for r, m, a, c in rejected_rows:
+    sales_rejected: dict[int, int] = {}
+    sales_total: dict[int, int] = {}
+    for _r, _m, _a, c in rejected_rows:
         sid = c.assigned_salesman_id
         if sid:
             sales_rejected[sid] = sales_rejected.get(sid, 0) + 1
@@ -145,9 +147,9 @@ def get_rejection_stats(
 
     # 趋势（近 30 天，或 days 内最多 30 天）
     trend_days = min(days or 30, 30)
-    trend_start = datetime.utcnow() - timedelta(days=trend_days - 1)
-    daily: Dict[str, int] = {}
-    for r, m, a, c in rejected_rows:
+    trend_start = utcnow() - timedelta(days=trend_days - 1)
+    daily: dict[str, int] = {}
+    for r, _m, _a, _c in rejected_rows:
         created = r.created_at
         if created is None:
             continue

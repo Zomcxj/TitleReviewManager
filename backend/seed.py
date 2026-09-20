@@ -1,11 +1,12 @@
-from database import SessionLocal, Base, engine
-import models  # noqa: F401 - needed for table registration
-from models import User, Customer, Application, Material, Review, Feedback, OperationLog
-from auth import hash_password
-from storage import customer_dir, get_pinyin_initial, save_file
 import uuid
-from datetime import datetime, timedelta
-from sqlalchemy import text
+from datetime import timedelta
+
+import models  # noqa: F401 - needed for table registration
+from auth import hash_password
+from database import SessionLocal
+from models import Application, Customer, Feedback, Material, OperationLog, Review, User
+from storage import customer_dir, get_pinyin_initial, save_file
+from utils.timeutil import utcnow
 
 # 注意：数据库结构迁移现在由 Alembic 管理。
 # 请运行 alembic upgrade head 来更新数据库结构。
@@ -173,16 +174,16 @@ def seed():
 
         # Set some submitted_at dates
         if len(created_apps) > 2:
-            created_apps[2].submitted_at = datetime.utcnow() - timedelta(days=5)
+            created_apps[2].submitted_at = utcnow() - timedelta(days=5)
             created_apps[2].institution_name = "广东省人力资源和社会保障厅"
         if len(created_apps) > 3:
-            created_apps[3].submitted_at = datetime.utcnow() - timedelta(days=10)
+            created_apps[3].submitted_at = utcnow() - timedelta(days=10)
             created_apps[3].institution_name = "成都市人力资源和社会保障局"
         if len(created_apps) > 4:
-            created_apps[4].submitted_at = datetime.utcnow() - timedelta(days=30)
+            created_apps[4].submitted_at = utcnow() - timedelta(days=30)
             created_apps[4].institution_name = "杭州市人力资源和社会保障局"
         if len(created_apps) > 7:
-            created_apps[7].submitted_at = datetime.utcnow() - timedelta(days=20)
+            created_apps[7].submitted_at = utcnow() - timedelta(days=20)
             created_apps[7].institution_name = "重庆市人力资源和社会保障局"
 
         # 5. Create materials
@@ -230,7 +231,7 @@ def seed():
                 # 同一类别下多份材料需要递增版本号（数据库有唯一约束
                 # uq_material_app_category_version，与真实上传逻辑保持一致）
                 for ver, fn in enumerate(filenames, start=1):
-                    content = f"这是示例文件: {fn}\n用于职称申报系统测试。\n".encode("utf-8")
+                    content = f"这是示例文件: {fn}\n用于职称申报系统测试。\n".encode()
                     rel_path = save_file(customer_rel, cat, fn, content)
 
                     material = Material(
@@ -338,7 +339,7 @@ def seed():
         ]
 
         from models import User as UserModel
-        for app, customer, action, detail, actor_id, resource_type in log_entries:
+        for _app, _customer, action, detail, actor_id, resource_type in log_entries:
             actor = db.query(UserModel).filter(UserModel.id == actor_id).first()
             log = OperationLog(
                 user_id=actor_id,

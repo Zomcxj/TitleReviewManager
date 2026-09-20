@@ -1,13 +1,16 @@
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import desc, or_
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, desc
-from database import get_db
-from models import Customer, Application
-from schemas import CustomerResponse
+
 from auth import get_current_user
-from datetime import datetime, timedelta
+from database import get_db
+from models import Application, Customer
 from routers.notifications import create_notification
+from schemas import CustomerResponse
 from utils.system_config import get_config
+from utils.timeutil import utcnow
 
 router = APIRouter(prefix="/api/public-pool", tags=["公海池"])
 
@@ -21,9 +24,6 @@ async def list_public_customers(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    user_id = current_user.get("id")
-    user_role = current_user.get("role")
-    
     query = db.query(Customer).filter(
         Customer.is_public == True,  # noqa: E712
         Customer.is_deleted == False,  # noqa: E712
@@ -60,7 +60,7 @@ async def list_public_customers(
         results.append({
             **item,
             "current_status": last_app.status if last_app else None,
-            "days_in_pool": (datetime.utcnow() - c.public_at).days if c.public_at else 0,
+            "days_in_pool": (utcnow() - c.public_at).days if c.public_at else 0,
         })
     
     return {"items": results, "total": total, "page": page, "page_size": page_size}
@@ -104,10 +104,10 @@ async def claim_customer(
     customer.assigned_salesman_id = user_id
     customer.is_public = False
     customer.public_at = None
-    customer.last_follow_up_at = datetime.utcnow()
+    customer.last_follow_up_at = utcnow()
     # 分配后 SLA 时长由系统配置 sla_hours_after_assign 驱动（默认 24 小时）
     sla_hours = get_config(db, "sla_hours_after_assign")
-    customer.sla_deadline = datetime.utcnow() + timedelta(hours=sla_hours)
+    customer.sla_deadline = utcnow() + timedelta(hours=sla_hours)
     
     db.commit()
     
@@ -146,7 +146,7 @@ async def release_customer(
     
     customer.assigned_salesman_id = None
     customer.is_public = True
-    customer.public_at = datetime.utcnow()
+    customer.public_at = utcnow()
     
     db.commit()
     
@@ -166,11 +166,11 @@ async def get_pool_stats(
     today_claims = db.query(Customer).filter(
         Customer.is_public == False,  # noqa: E712
         Customer.is_deleted == False,  # noqa: E712
-        Customer.public_at >= datetime.utcnow() - timedelta(days=1)
+        Customer.public_at >= utcnow() - timedelta(days=1)
     ).count()
     
     overdue = db.query(Customer).filter(
-        Customer.sla_deadline < datetime.utcnow(),
+        Customer.sla_deadline < utcnow(),
         Customer.is_public == False,  # noqa: E712
         Customer.is_deleted == False,  # noqa: E712
         Customer.assigned_salesman_id.isnot(None)
@@ -178,8 +178,8 @@ async def get_pool_stats(
     
     expiring_soon = db.query(Customer).filter(
         Customer.sla_deadline.between(
-            datetime.utcnow(),
-            datetime.utcnow() + timedelta(hours=12)
+            utcnow(),
+            utcnow() + timedelta(hours=12)
         ),
         Customer.is_public == False,  # noqa: E712
         Customer.is_deleted == False,  # noqa: E712

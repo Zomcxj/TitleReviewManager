@@ -1,21 +1,29 @@
+import logging
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from database import get_db
-from models import User, OperationLog
-from schemas import LoginRequest, UserResponse
+
 from auth import (
-    verify_password, create_access_token, get_current_user,
     ACCESS_TOKEN_EXPIRE_MINUTES,
+    create_access_token,
+    get_current_user,
+    verify_password,
 )
+from database import get_db
+from models import OperationLog, User
+from schemas import LoginRequest, UserResponse
 from utils.login_guard import (
-    check_ip_rate_limit, record_attempt, check_account_lock,
-    record_failed_login, reset_login_state, lock_status,
+    check_account_lock,
+    check_ip_rate_limit,
+    lock_status,
+    record_attempt,
+    record_failed_login,
+    reset_login_state,
 )
 from utils.system_config import get_config
-from datetime import datetime
-import re
-import logging
+from utils.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +62,7 @@ def _write_login_log(db: Session, *, user_id, username, action: str, request: Re
 @router.post("/login")
 async def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     # Get client IP（反代场景下从 X-Forwarded-For 解析，见 utils/request_context）
-    from utils.request_context import get_client_ip, cookie_extra_kwargs
+    from utils.request_context import cookie_extra_kwargs, get_client_ip
     client_ip = get_client_ip(request)
 
     # 1. Rate limiting per IP（数据库存储，多 worker 共享计数）
@@ -174,12 +182,13 @@ def _alert_brute_force(db: Session, client_ip: str, username: str) -> None:
     """
     try:
         from datetime import timedelta
+
         from models import LoginAttempt, Notification
         from routers.notifications import create_notification
 
         window_minutes = 10
         threshold = 20
-        since = datetime.utcnow() - timedelta(minutes=window_minutes)
+        since = utcnow() - timedelta(minutes=window_minutes)
         # 统计该 IP 维度（含进度查询等复用同一表，用 key 前缀区分）
         fails = db.query(LoginAttempt).filter(
             LoginAttempt.scope == "ip",
@@ -190,7 +199,7 @@ def _alert_brute_force(db: Session, client_ip: str, username: str) -> None:
             return
 
         # 去重：30 分钟内已告警过同一 IP 则跳过
-        dedup_since = datetime.utcnow() - timedelta(minutes=30)
+        dedup_since = utcnow() - timedelta(minutes=30)
         recent = db.query(Notification).filter(
             Notification.type == "security_alert",
             Notification.created_at >= dedup_since,

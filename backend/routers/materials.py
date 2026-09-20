@@ -1,18 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
-from fastapi.responses import Response
-from sqlalchemy.orm import Session
-from database import get_db
-from models import Material, Application, Customer, OperationLog
-from schemas import MaterialResponse
-from enums import MaterialCategory, AuditStatus
-from auth import get_current_user
-from enums import ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE
-from datetime import datetime
-from utils.system_config import get_config
-from storage import save_file, read_file, delete_file as storage_delete, list_files as storage_list, customer_dir, get_pinyin_initial
 import logging
 import os as _os
 from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
+from sqlalchemy.orm import Session
+
+from auth import get_current_user
+from database import get_db
+from enums import ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE, AuditStatus, MaterialCategory
+from models import Application, Customer, Material, OperationLog
+from schemas import MaterialResponse
+from storage import customer_dir, get_pinyin_initial, read_file, save_file
+from storage import delete_file as storage_delete
+from storage import list_files as storage_list
+from utils.system_config import get_config
+from utils.timeutil import utcnow
 
 router = APIRouter(prefix="/api/applications/{application_id}/materials", tags=["材料管理"])
 logger = logging.getLogger(__name__)
@@ -27,9 +30,10 @@ def require_write_role(user: dict):
 
 def check_customer_ownership(user: dict, customer: Customer):
     """数据隔离：业务员只能操作自己名下客户的材料，admin/reviewer 不限。"""
-    if user.get("role") == "salesman":
-        if not customer or customer.assigned_salesman_id != (user.get("id") or user.get("user_id")):
-            raise HTTPException(status_code=403, detail="无权操作该客户的材料")
+    if user.get("role") == "salesman" and (
+        not customer or customer.assigned_salesman_id != (user.get("id") or user.get("user_id"))
+    ):
+        raise HTTPException(status_code=403, detail="无权操作该客户的材料")
 
 
 def _max_file_size(db: Session) -> tuple[int, int]:
@@ -42,7 +46,7 @@ def _max_file_size(db: Session) -> tuple[int, int]:
 
 
 def _get_customer_dir(customer: Customer) -> str:
-    year = customer.created_at.year if customer.created_at else datetime.utcnow().year
+    year = customer.created_at.year if customer.created_at else utcnow().year
     salesman = ""
     if customer.assigned_salesman:
         salesman = customer.assigned_salesman.username or ""

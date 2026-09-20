@@ -12,8 +12,9 @@
 - 单位时间内调用次数上限（默认每用户 10 分钟 20 次）
 """
 import logging
-from datetime import datetime, timedelta
-from typing import List, Optional
+from datetime import timedelta
+
+from utils.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ BATCH_RATE_WINDOW_MINUTES = 10
 BATCH_RATE_MAX_CALLS = 20
 
 
-def validate_batch_ids(ids: Optional[List[int]], field_name: str = "IDs") -> List[int]:
+def validate_batch_ids(ids: list[int] | None, field_name: str = "IDs") -> list[int]:
     """校验批量操作的 ID 列表：非空、去重、不超上限。
 
     返回去重后的列表；不合法时抛 HTTPException。
@@ -56,6 +57,7 @@ def check_batch_rate_limit(db, user: dict, action: str) -> None:
     防止脚本化高频调用批量接口刷通知或压数据库。
     """
     from fastapi import HTTPException
+
     from models import LoginAttempt
 
     uid = (user or {}).get("user_id") or (user or {}).get("id")
@@ -63,7 +65,7 @@ def check_batch_rate_limit(db, user: dict, action: str) -> None:
         return
 
     key = f"batch:{action}:{uid}"
-    since = datetime.utcnow() - timedelta(minutes=BATCH_RATE_WINDOW_MINUTES)
+    since = utcnow() - timedelta(minutes=BATCH_RATE_WINDOW_MINUTES)
     count = db.query(LoginAttempt).filter(
         LoginAttempt.scope == "ip",
         LoginAttempt.key == key,
@@ -76,5 +78,5 @@ def check_batch_rate_limit(db, user: dict, action: str) -> None:
             detail=f"批量操作过于频繁（{BATCH_RATE_WINDOW_MINUTES} 分钟内最多 {BATCH_RATE_MAX_CALLS} 次），请稍后再试",
         )
 
-    db.add(LoginAttempt(scope="ip", key=key, attempted_at=datetime.utcnow()))
+    db.add(LoginAttempt(scope="ip", key=key, attempted_at=utcnow()))
     db.flush()

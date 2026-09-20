@@ -1,18 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
-from sqlalchemy.orm import Session
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import desc
-from database import get_db
-from models import FollowUp, Customer, User
-from schemas import FollowUpResponse, FollowUpCreate
+from sqlalchemy.orm import Session
+
 from auth import get_current_user
-from datetime import datetime
-from typing import List
+from database import get_db
+from models import Customer, FollowUp, User
 from routers.notifications import create_notification
+from schemas import FollowUpCreate, FollowUpResponse
+from utils.timeutil import utcnow
 
 router = APIRouter(prefix="/api/follow-ups", tags=["跟进记录"])
 
 
-@router.get("/customer/{customer_id}", response_model=List[FollowUpResponse])
+@router.get("/customer/{customer_id}", response_model=list[FollowUpResponse])
 async def get_customer_follow_ups(
     customer_id: int,
     db: Session = Depends(get_db),
@@ -69,7 +70,7 @@ async def create_follow_up(
     db.flush()
     
     # 更新客户最后跟进时间（SLA 自动回收机制的依赖）
-    customer.last_follow_up_at = datetime.utcnow()
+    customer.last_follow_up_at = utcnow()
     
     if data.next_follow_up_at:
         salesman_id = customer.assigned_salesman_id
