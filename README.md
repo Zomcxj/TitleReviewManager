@@ -44,9 +44,13 @@ npm run dev                     # http://localhost:5173，/api 自动代理到 8
 ### 运行测试
 
 ```bash
-cd backend && python -m pytest   # 218 个用例：状态机、数据隔离、上传校验、SLA、备份恢复、文档一致性等
-cd frontend && npm test          # 前端 Vitest
+cd backend && python -m pytest        # 231 个用例：状态机、数据隔离、上传校验、SLA、
+                                      # 备份恢复、文档一致性、部署配置一致性等
+cd frontend && npm run test:run       # 前端 Vitest（test:run 跑一次即退出）
 ```
+
+> 前端请用 `npm run test:run` 而不是裸 `npm test`：后者是 watch 模式，在 CI
+> 里会一直挂着不退出（CI 用的就是 `test:run`）。
 
 > 测试一律使用临时数据库文件，不会触碰开发库 `title_service.db`。
 
@@ -57,6 +61,9 @@ cp .env.example .env             # 数据库密码等必填项未设置会拒绝
 docker-compose up -d --build
 curl http://localhost:8000/api/health/detail   # 部署自检
 ```
+
+> `.env` 中新增的任何变量都需同步加到 `docker-compose.yml` 的 `environment` 段
+> —— compose 不使用 `env_file`，不显式转发就不会传进容器。
 
 部署清单（HTTPS/反代/备份恢复/定时任务）见 [docs/deployment.md](docs/deployment.md)。
 
@@ -82,7 +89,7 @@ curl http://localhost:8000/api/health/detail   # 部署自检
 │   ├── storage.py        # 存储抽象层（本地 / SMB NAS）
 │   ├── db_bootstrap.py   # 数据库引导（Alembic 迁移 + 接管 create_all 历史库）
 │   ├── alembic/          # 数据库迁移（schema 的唯一权威）
-│   ├── tests/            # 218 个 pytest 用例
+│   ├── tests/            # 231 个 pytest 用例
 │   ├── tasks/            # SLA 调度、自动备份、恢复演练
 │   └── utils/            # 数据隔离/脱敏/上传校验/调度器/催办/哈希链等 22 个工具模块
 ├── frontend/

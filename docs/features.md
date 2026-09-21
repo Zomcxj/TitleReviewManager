@@ -38,7 +38,9 @@
 
 ### 存储架构
 - 存储后端抽象层（Storage Abstraction Layer）
-- 支持本地文件系统或 SMB NAS
+- 支持本地文件系统或 NAS 共享目录（`STORAGE_BACKEND=smb` 时 `NAS_ROOT` 指向
+  已由操作系统挂载好的共享路径；应用只做普通文件读写，不实现 SMB 协议，
+  凭据由挂载配置负责）
 - 目录模板可配置（`customer_dir()` 函数）
 - 拼音首字母自动计算（GB2312 编码区间映射，无需 pypinyin）
 - 文件审计日志（`file_audit.log`）
@@ -249,9 +251,12 @@
 - 内容与系统实际参数对齐（SLA 48h、公海上限 50、锁定 10 次等）
 
 ### 部署
-- Docker 容器化（`docker-compose.yml`）
+- Docker 容器化（`docker-compose.yml`）；备份目录挂载在 `backups_data` 卷上
 - 支持 SQLite（开发）/ PostgreSQL（生产）
-- **启动时轻量 schema 同步**：自动补齐缺失的表与列（只加不删），已有库升级代码后可直接启动
+- **schema 权威统一到 Alembic**：启动只做只读漂移检测（发现库结构与模型不一致时
+  打告警日志），不执行任何 DDL；历史库（`create_all` 建出、无版本记录）由
+  `db_bootstrap.py` 自动接管后再迁移，人工补救走 `python db_bootstrap.py --repair`
+- 自动备份（每日，`pg_dump` / sqlite3 一致性快照）+ 恢复演练，失败向管理员发通知
 - 前端 Vite 热更新 / 生产构建
 - CORS 白名单配置
 - 全局异常处理

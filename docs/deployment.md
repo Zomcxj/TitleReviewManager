@@ -150,7 +150,8 @@ cd backend
 python -m pytest          # 全部用例（使用临时库，不触碰开发库）
 
 cd frontend
-npm test                  # Vitest
+npm run test:run          # Vitest（跑一次即退出；裸 npm test 是 watch 模式）
+npm run typecheck         # vue-tsc --noEmit
 npm run lint              # ESLint（仅 error 级为门禁）
 ```
 

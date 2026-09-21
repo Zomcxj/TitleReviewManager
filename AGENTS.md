@@ -55,7 +55,9 @@ cd backend && pytest
 cd frontend && npm install
 npm run dev                                         # Vite 开发服务器，端口 5173
 npm run build                                       # vue-tsc 类型检查 + vite build
-npm test                                            # 运行前端测试 (Vitest)
+npm run test:run                                    # 前端测试 (Vitest，跑一次即退出)
+npm run typecheck                                   # 仅类型检查 (vue-tsc --noEmit)
+npm run lint                                        # ESLint
 
 # Docker
 docker-compose up -d --build
@@ -103,7 +105,7 @@ start.sh    (Linux/WSL)
 
 ## 注意
 
-- 后端测试在 `backend/tests/`（pytest，约 240 个用例）；前端测试用 Vitest
+- 后端测试在 `backend/tests/`（pytest，231 个用例）；前端测试用 Vitest
   （`npm run test:run`，注意裸 `npm test` 是 watch 模式，CI 会挂住）
 - 所有 router 在 `main.py` 手动注册，新增 router 需添加 `app.include_router()`
 - `ALLOWED_ORIGINS` 支持逗号分隔多个 origin
