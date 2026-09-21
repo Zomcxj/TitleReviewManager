@@ -180,12 +180,23 @@ export NAS_ROOT=./nas_storage
 
 ### SMB 模式（Synology/QNAP）
 
+存储层只把 `NAS_ROOT` 当普通目录读写，**不实现 SMB 协议**，因此没有
+`SMB_USER` / `SMB_PASS` —— 凭据由操作系统挂载负责。请先把共享挂载到本地路径，
+再让应用指向该路径：
+
 ```bash
+# 1) 先挂载共享（凭据在这里提供，不在应用配置里）
+#    Linux: mount -t cifs //192.168.1.100/title_files /mnt/nas \
+#             -o username=nas_user,password=***,vers=3.0
+#    Windows: net use Z: \\192.168.1.100\title_files /user:nas_user ***
+
+# 2) 应用指向挂载点
 export STORAGE_BACKEND=smb
-export NAS_ROOT="//192.168.1.100/title_files"
-export SMB_USER="nas_user"
-export SMB_PASS="nas_password"
+export NAS_ROOT="/mnt/nas"          # 或 Windows 下的 "Z:\\"
 ```
+
+> Docker 部署时把该路径 bind mount 进容器，并让 `NAS_ROOT` 指向容器内路径，
+> 例如 `-v /mnt/nas:/data/nas` 配合 `NAS_ROOT=/data/nas`（compose 已如此配置）。
 
 ---
 
@@ -311,12 +322,21 @@ docker compose exec backend alembic upgrade head
 配置（`.env`）：
 ```bash
 BACKUP_ENABLED="1"          # 是否启用自动备份
-BACKUP_DIR=""               # 默认 backend/backups
+BACKUP_DIR=""               # 默认 backend/backups；docker compose 下默认 /data/backups
 BACKUP_KEEP="7"             # 保留份数
 BACKUP_HOUR="3"             # 每天几点执行（0-23）
 BACKUP_INCLUDE_FILES="1"    # 是否一并备份材料文件
 BACKUP_COMPRESS="1"         # 是否 gzip 压缩
 ```
+
+> **Docker 部署注意**：`docker-compose.yml` 已把上述变量逐个转发给容器（compose 不使用
+> `env_file`，`.env` 里的变量必须在 `environment` 段显式列出才生效），并把
+> `backups_data` 卷挂到 `/data/backups`。**不要把 `BACKUP_DIR` 改到卷外**——备份放在
+> 容器可写层里会随容器一起消失，失去备份的意义。想落到宿主机目录，改成 bind mount：
+> ```yaml
+>     volumes:
+>       - /srv/trm-backups:/data/backups
+> ```
 
 管理员也可在界面「数据备份」页查看配置、手动触发、浏览历史备份。
 
@@ -371,7 +391,11 @@ docker compose start backend
 >
 > 备份失败会向所有管理员发送站内通知（此前只写日志，等于失败被静默吞掉）。
 >
-> PostgreSQL 环境需要容器内可执行 `pg_dump`（Dockerfile 已安装 postgresql-client）。
+> PostgreSQL 环境需要容器内可执行 `pg_dump`。官方 `Dockerfile` 已安装
+> `postgresql-client`，并在构建期执行 `pg_dump --version` 做校验 —— 镜像里没有
+> `pg_dump` 时构建会直接失败，而不是等到凌晨 3 点备份时才暴露。
+> 自建镜像或非 Debian 基础镜像需自行安装（Alpine: `apk add postgresql-client`）。
+>
 > 外部 cron 方式：`BACKUP_ENABLED=0` 关闭内置，改为 `python tasks/backup.py`。
 
 ### 7. 安全建议
@@ -432,17 +456,30 @@ PUBLIC_URL="https://your-domain.com"
 >
 > `COOKIE_SECURE=1` 后如果仍用 http 访问，浏览器不会发送 cookie，
 > 表现为"登录成功但立刻又跳回登录页"。切换 https 时再开这一项。
+>
+> docker compose 部署时这四项同样需要在 `.env` 中设置：compose 已在
+> `environment` 段转发 `TRUST_PROXY` / `FORCE_HTTPS` / `COOKIE_SECURE` /
+> `ENABLE_HSTS`（默认均为 `0`，即直连安全默认值）。
 
 ### 9. 依赖漏洞扫描（CI）
 
-`.github/workflows/security.yml` 已配置，包含四个任务：
+`.github/workflows/security.yml` 已配置，包含五个任务：
 
 | 任务 | 内容 |
 |------|------|
 | backend-security | `pip-audit` 扫依赖 CVE + `bandit` 静态安全分析 + `ruff check` |
-| frontend-security | `npm audit`（high/critical 失败）+ `eslint src --quiet` |
+| frontend-security | `npm audit`（high/critical 失败）+ `eslint src --quiet` + `vue-tsc` 类型检查 + `vitest run` + `vite build` |
 | backend-tests | pytest（Python 3.10 与 3.12 双版本矩阵；3.12 额外跑废弃告警门禁） |
 | migration-check | 从零执行全部迁移并校验表完整性；另测 create_all 历史库的接管路径 |
+| docker-build | 真实构建镜像 + 容器内验证 `pg_dump` 可用 + 起容器确认 `/api/health` 返回 200 |
+
+> 前端这一步此前只做依赖扫描与 eslint —— 而 eslint 不做类型检查，仓库里已有的
+> vitest 用例也从不执行。现在类型检查、单元测试、生产构建都纳入门禁，
+> 保证「能构建、类型对、测试过」在合并前就成立。
+>
+> `docker-build` 的存在理由：开发机通常不装 Docker，镜像能否构建、容器内该有的
+> 工具在不在，只能在 CI 验证。`pg_dump` 缺失曾导致 PostgreSQL 自动备份永远失败，
+> 且只在凌晨 3 点发一条站内通知才暴露 —— 现在构建期与 CI 双重拦截。
 
 触发时机：push / PR 到 main、每周一自动扫描、可手动触发。
 

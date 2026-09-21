@@ -233,7 +233,7 @@
 import { ref, computed, watch } from 'vue'
 import api from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowUp, ArrowDown, CircleCheck, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, CircleCheck, Delete, Document, Download, Folder, FolderOpened, Upload, WarningFilled } from '@element-plus/icons-vue'
 import { docxToHtml, fetchMaterialBuffer, getFileExt } from '../utils/docPreview'
 
 const props = defineProps<{ applicationId: number; canSubmit?: boolean }>()

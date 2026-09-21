@@ -138,6 +138,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../api'
 import { ElMessage } from 'element-plus'
+import { List } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const authStore = useAuthStore()

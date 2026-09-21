@@ -70,6 +70,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import api from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
 
 interface Customer {
   id: number

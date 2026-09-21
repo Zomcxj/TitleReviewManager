@@ -22,6 +22,9 @@ gunicorn>=21.2.0
 # 测试
 pytest>=8.0.0
 httpx>=0.25.0
+# 部署配置一致性测试要解析 docker-compose.yml（见 tests/test_deploy_config.py）。
+# 必须显式声明：CI 只装本文件，靠 bandit 等传递依赖会在别处失效。
+PyYAML>=6.0
 
 # 代码静态检查（CI 的 ruff check 步骤使用；规则集见 backend/ruff.toml）
 ruff>=0.6.0

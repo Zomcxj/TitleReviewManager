@@ -37,6 +37,23 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       PUBLIC_URL: ${PUBLIC_URL:-}
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
+      # HTTPS / 反向代理。TRUST_PROXY 默认 0：单机直连时若采信
+      # X-Forwarded-For，客户端可伪造该头绕过登录限流。
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      FORCE_HTTPS: ${FORCE_HTTPS:-0}
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+      ENABLE_HSTS: ${ENABLE_HSTS:-0}
+      # 内置调度器与自动备份。BACKUP_DIR 指向下方挂载的卷，
+      # 否则默认的 /app/backups 不在卷上，容器重建即丢备份。
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-1}
+      SCHEDULER_INTERVAL_MINUTES: ${SCHEDULER_INTERVAL_MINUTES:-60}
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-1}
+      BACKUP_DIR: ${BACKUP_DIR:-/data/backups}
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+      BACKUP_HOUR: ${BACKUP_HOUR:-3}
+      BACKUP_INCLUDE_FILES: ${BACKUP_INCLUDE_FILES:-1}
+      BACKUP_COMPRESS: ${BACKUP_COMPRESS:-1}
+      BACKUP_DRILL_ENABLED: ${BACKUP_DRILL_ENABLED:-1}
       # 外部通知渠道（可选，未配置则只用站内通知）
       EXTERNAL_NOTIFY_TYPES: ${EXTERNAL_NOTIFY_TYPES:-status_change,sla_overdue,pool_recovery}
       EMAIL_NOTIFY_ENABLED: ${EMAIL_NOTIFY_ENABLED:-0}
@@ -53,6 +70,9 @@ services:
       # 仅挂载持久化数据，不挂载源码（避免容器内代码与镜像不一致）
       - nas_data:/data/nas
       - uploads_data:/app/uploads
+      # 备份必须落在卷上：备份的意义是「容器/主机出事时数据还在」，
+      # 放在容器可写层等于和数据库一起消失。
+      - backups_data:/data/backups
     depends_on:
       db:
         condition: service_healthy
@@ -67,3 +87,4 @@ volumes:
   pgdata:
   nas_data:
   uploads_data:
+  backups_data:

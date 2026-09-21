@@ -15,9 +15,9 @@
       </div>
       <div class="toolbar-right">
         <span class="result-count">共 {{ total }} 条</span>
-        <el-button v-if="canBatchOperate" icon="Bell" :loading="batchLoading" @click="handleBatchRemind">批量催办</el-button>
-        <el-button v-if="canBatchOperate" icon="Promotion" :loading="batchLoading" @click="handleBatchSubmit">批量提交机构</el-button>
-        <el-button v-if="authStore.isAdmin || authStore.isSalesman" type="success" icon="Download" @click="handleExport">导出 Excel</el-button>
+        <el-button v-if="canBatchOperate" :icon="Bell" :loading="batchLoading" @click="handleBatchRemind">批量催办</el-button>
+        <el-button v-if="canBatchOperate" :icon="Promotion" :loading="batchLoading" @click="handleBatchSubmit">批量提交机构</el-button>
+        <el-button v-if="authStore.isAdmin || authStore.isSalesman" type="success" :icon="Download" @click="handleExport">导出 Excel</el-button>
       </div>
     </div>
 
@@ -74,6 +74,7 @@ import { useRoute } from 'vue-router'
 import api from '../api'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Bell, Download, Promotion, Search } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const authStore = useAuthStore()

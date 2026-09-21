@@ -88,6 +88,7 @@
 import { ref, onMounted } from 'vue'
 import api from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { CopyDocument, Plus } from '@element-plus/icons-vue'
 
 const tokens = ref<any[]>([])
 const loading = ref(false)

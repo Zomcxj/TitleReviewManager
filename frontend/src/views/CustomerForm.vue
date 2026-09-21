@@ -192,6 +192,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 import { ElMessage } from 'element-plus'
+import { Briefcase, Delete, Memo, OfficeBuilding, Plus, User } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const formRef = ref()

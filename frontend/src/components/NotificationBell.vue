@@ -33,7 +33,9 @@
           @click="markAsRead(n.id)"
         >
           <div class="notification-icon">
-            <el-icon :size="20" :class="getTypeIcon(n.type)"></el-icon>
+            <el-icon :size="20" :class="getTypeIconClass(n.type)">
+              <component :is="getTypeIcon(n.type)" />
+            </el-icon>
           </div>
           <div class="notification-content">
             <div class="notification-title">{{ n.title }}</div>
@@ -62,8 +64,28 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import type { Component } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
+import {
+  AlarmClock,
+  Bell,
+  Clock,
+  Delete,
+  Document,
+  DocumentChecked,
+  Download,
+  Folder,
+  InfoFilled,
+  Key,
+  Phone,
+  RefreshLeft,
+  Setting,
+  User,
+  UserFilled,
+  Warning,
+  WarningFilled,
+} from '@element-plus/icons-vue'
 
 interface Notification {
   id: number
@@ -142,12 +164,60 @@ async function clearRead() {
   }
 }
 
-function getTypeIcon(type: string): string {
+/**
+ * 通知类型 → 图标组件。
+ *
+ * 此前这里返回的是 CSS 类名（'el-icon--warning' 等）并绑到 <el-icon> 上，但
+ * <el-icon> 内部没有任何子组件 —— 结果每种通知左侧都是一个空白占位，
+ * 而类型信息（用颜色区分）也随之失效。现在改为真正渲染图标。
+ */
+const TYPE_ICONS: Record<string, Component> = {
+  // 跟进 / SLA
+  follow_up_reminder: Clock,
+  follow_up_overdue: AlarmClock,
+  sla_overdue: WarningFilled,
+  sla_warning: Warning,
+  review_sla_overdue: WarningFilled,
+  // 客户 / 公海 / 批次
+  customer: User,
+  pool_claim: UserFilled,
+  pool_recovery: RefreshLeft,
+  batch_assign: Document,
+  batch_release: Document,
+  batch_review: DocumentChecked,
+  batch_remind: Bell,
+  // 材料 / 审核
+  material: Folder,
+  review: DocumentChecked,
+  // 系统 / 安全 / 备份
+  backup: Download,
+  backup_failed: WarningFilled,
+  security_alert: WarningFilled,
+  auth: Key,
+  audit: Document,
+  system_config: Setting,
+  system: InfoFilled,
+  // 其余（application / export / phone / solid 等）
+  application: Document,
+  export: Download,
+  phone: Phone,
+}
+
+/** 无专属图标时统一用 InfoFilled，避免出现空白占位 */
+function getTypeIcon(type: string): Component {
+  return TYPE_ICONS[type] || InfoFilled
+}
+
+/** 仅保留颜色语义；图标本身由 getTypeIcon 渲染 */
+function getTypeIconClass(type: string): string {
   const map: Record<string, string> = {
-    'status_change': 'el-icon--warning',
-    'follow_up_reminder': 'el-icon--primary',
-    'follow_up_overdue': 'el-icon--danger',
-    'system': 'el-icon--info',
+    follow_up_overdue: 'is-danger',
+    sla_overdue: 'is-danger',
+    review_sla_overdue: 'is-danger',
+    backup_failed: 'is-danger',
+    security_alert: 'is-danger',
+    follow_up_reminder: 'is-primary',
+    sla_warning: 'is-warning',
   }
   return map[type] || ''
 }

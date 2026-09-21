@@ -65,6 +65,7 @@
 import { ref, onMounted, defineProps } from 'vue'
 import api from '../api'
 import { ElMessage } from 'element-plus'
+import { AlarmClock, Plus } from '@element-plus/icons-vue'
 
 interface FollowUp {
   id: number

@@ -69,6 +69,7 @@
 import { ref, onMounted } from 'vue'
 import api from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Switch } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const customers = ref<any[]>([])

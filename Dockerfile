@@ -10,8 +10,11 @@ FROM python:3.12-slim AS runtime
 WORKDIR /app
 
 # psycopg2 需要 libpq；curl 用于 HEALTHCHECK
+# postgresql-client 提供 pg_dump —— 生产用 PostgreSQL，自动备份靠它导出数据库。
+# 不锁版本：pg_dump 只要不低于服务端大版本即可（服务端 postgres:15-alpine），
+# 而 Debian 基础镜像升级时锁死版本反而会让构建失败。
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 curl && \
+    libpq5 curl postgresql-client && \
     rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .
@@ -26,6 +29,10 @@ ENV FRONTEND_DIST=/frontend_dist \
     PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8000
+
+# 构建期验证 pg_dump 可用：备份失败只会在凌晨 3 点发通知，等到那时才发现太晚。
+# 让镜像构建直接失败，比让「备份静默失效」进入生产强得多。
+RUN pg_dump --version
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1

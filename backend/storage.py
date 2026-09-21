@@ -30,10 +30,11 @@ def _log_file_action(action: str, path: str, detail: str = ""):
         logger.warning(f"文件审计日志写入失败（操作 {action} / {path}）: {e}")
 
 # 配置：通过环境变量注入
+# SMB 模式下 NAS_ROOT 是「已被操作系统挂载好的共享目录路径」，本层只做普通文件
+# 读写，不实现 SMB 协议 —— 因此没有 SMB_USER/SMB_PASS：凭据由挂载配置
+# （/etc/fstab、mount -t cifs、Docker 的 bind mount）负责，应用拿不到也不该拿。
 STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "local")  # local | smb
-NAS_ROOT = os.getenv("NAS_ROOT", "")  # e.g. //192.168.1.100/share
-SMB_USER = os.getenv("SMB_USER", "")
-SMB_PASS = os.getenv("SMB_PASS", "")
+NAS_ROOT = os.getenv("NAS_ROOT", "")  # e.g. //192.168.1.100/share（需已挂载）
 
 # 本地开发模式根目录
 LOCAL_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "nas_data")

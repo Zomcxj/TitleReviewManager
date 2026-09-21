@@ -103,7 +103,13 @@ start.sh    (Linux/WSL)
 
 ## 注意
 
-- 后端无自动热加载以外的测试框架，`tests/` 目录不存在
+- 后端测试在 `backend/tests/`（pytest，约 240 个用例）；前端测试用 Vitest
+  （`npm run test:run`，注意裸 `npm test` 是 watch 模式，CI 会挂住）
 - 所有 router 在 `main.py` 手动注册，新增 router 需添加 `app.include_router()`
 - `ALLOWED_ORIGINS` 支持逗号分隔多个 origin
 - 文件上传限制 50MB，白名单扩展名：`.pdf .doc .docx .jpg .jpeg .png`
+- 新增环境变量时**必须同步 `docker-compose.yml` 的 `environment` 段**：
+  compose 不使用 `env_file`，不显式转发就不会传进容器（`tests/test_deploy_config.py`
+  会因此失败）。同理新增依赖 `pg_dump` 之类的系统工具时同步 `Dockerfile`
+- Element Plus 图标按需引入：组件里用到图标必须显式
+  `import { Xxx } from '@element-plus/icons-vue'`，`main.ts` 不再全局注册

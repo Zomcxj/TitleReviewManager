@@ -146,6 +146,7 @@
 import { ref } from 'vue'
 import api from '../api'
 import { ElMessage } from 'element-plus'
+import { Check, Document, Download, Finished, Upload } from '@element-plus/icons-vue'
 
 const wordUploadRef = ref<any>(null)
 const excelUploadRef = ref<any>(null)

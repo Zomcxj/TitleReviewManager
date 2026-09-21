@@ -8,6 +8,8 @@
     "build": "vue-tsc && vite build",
     "preview": "vite preview",
     "test": "vitest",
+    "test:run": "vitest run",
+    "typecheck": "vue-tsc --noEmit",
     "lint": "eslint src",
     "audit": "node scripts/audit-check.mjs"
   },

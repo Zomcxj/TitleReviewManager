@@ -7,9 +7,10 @@
  *    Viewer），材料内容（含身份证等敏感信息）不会离开本域。
  * 2. XSS 防护 —— mammoth 输出的 HTML 来自不可信文档内容，必须经 DOMPurify 白名单净化后
  *    才允许交给 v-html 渲染。
+ * 3. mammoth 按需加载 —— 它约 575KB，而预览 docx 是低频操作。改为动态 import 后
+ *    该依赖被拆成独立 chunk，只在用户真正点开预览时才下载，不再拖累首屏。
  */
 import DOMPurify from 'dompurify'
-import mammoth from 'mammoth'
 
 /** 允许保留的标签：仅排版相关，排除 script / iframe / style / object 等可执行或可外联内容 */
 const ALLOWED_TAGS = [
@@ -56,7 +57,9 @@ export async function docxToHtml(arrayBuffer: ArrayBuffer): Promise<string> {
   if (!arrayBuffer || arrayBuffer.byteLength === 0) {
     throw new Error('文件内容为空')
   }
+  // 动态导入：mammoth 只在真正解析 docx 时才下载（见文件头说明）。
   // mammoth 在浏览器端依赖 arrayBuffer 输入（其 browser 字段会把 fs 实现替换为内存实现）
+  const { default: mammoth } = await import('mammoth')
   const result = await mammoth.convertToHtml({ arrayBuffer })
   const rawHtml = (result && result.value) || ''
   return sanitizeDocHtml(rawHtml)

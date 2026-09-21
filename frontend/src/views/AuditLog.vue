@@ -124,6 +124,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import api from '../api'
 import { ElMessage } from 'element-plus'
+import { Download, Lock } from '@element-plus/icons-vue'
 
 interface Log {
   id: number

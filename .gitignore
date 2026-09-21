@@ -19,6 +19,16 @@ dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# 根目录 package-lock.json 属于本地 E2E 脚本（test_e2e.js，同样不入版本控制）的
+# 依赖锁，对应的 package.json 已在 0ab8230 删除。没有 package.json 的 lockfile
+# 对新克隆毫无用处 —— 实测 `npm ci` 直接 ENOENT 失败。前端 lockfile 仍受跟踪，
+# 故用 / 锚定到根目录，避免误伤 frontend/package-lock.json。
+/package-lock.json
+
+# 覆盖率产物
+coverage/
+.coverage
+htmlcov/
 
 # Database
 *.db

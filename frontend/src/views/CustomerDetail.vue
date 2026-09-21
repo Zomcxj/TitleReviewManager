@@ -400,6 +400,7 @@ import api from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MaterialUpload from './MaterialUpload.vue'
 import FollowUpTimeline from '../components/FollowUpTimeline.vue'
+import { Calendar, ChatDotRound, Check, RefreshRight, Switch, Upload, WarningFilled } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const authStore = useAuthStore()

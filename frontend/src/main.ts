@@ -3,7 +3,6 @@ import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
 import { reportError } from './utils/errorReporter'
@@ -16,9 +15,10 @@ app.use(pinia)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-  app.component(key, component)
-}
+// 图标按需使用：各组件自行 `import { Xxx } from '@element-plus/icons-vue'`。
+// 此前这里把 294 个图标全量全局注册，未使用的图标无法被 tree-shaking 剔除，
+// 主包因此白白变大。全量注册还掩盖了真实依赖：任何图标不 import 也能用，
+// 删掉 import 时不会报错，直到运行时才暴露。
 
 // ---------------------------------------------------------------------------
 // 全局错误上报：Vue 组件内异常、全局 JS 错误、未处理的 Promise 拒绝

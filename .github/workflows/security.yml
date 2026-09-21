@@ -50,7 +50,7 @@ jobs:
           ruff check .
 
   frontend-security:
-    name: 前端依赖扫描
+    name: 前端检查（依赖/类型/测试/构建）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,6 +78,29 @@ jobs:
           # --quiet 只报错误级问题（未使用变量/导入、未定义变量、Vue 反模式等），
           # 见 frontend/eslint.config.mjs 的取舍说明；any 类告警不作为门禁
           npx eslint src --quiet
+
+      - name: 类型检查（vue-tsc）
+        working-directory: frontend
+        run: |
+          # eslint 不做类型检查：模板里的类型错误要等 `npm run build` 才暴露。
+          # 单独一步是为了让失败原因一眼可见（否则混在构建输出里）。
+          npm run typecheck
+
+      - name: 单元测试（vitest）
+        working-directory: frontend
+        run: |
+          # 用 vitest run 而非 vitest —— 后者是 watch 模式，在 CI 里会一直挂着不退出。
+          # 此前仓库里已有测试文件，但 CI 从不执行，等于写了没接门禁。
+          npm run test:run
+
+      - name: 生产构建（vite build）
+        working-directory: frontend
+        run: |
+          # 校验真正要部署的产物能构建出来。dist 已移出版本控制、改由部署时构建，
+          # 若不在这里验证，构建断裂要等 docker compose build 才发现。
+          # 注意：build 脚本本身含 vue-tsc，与上一步有重复；上一步的价值在于
+          # 失败时能一眼看出是类型问题还是打包问题。
+          npm run build
 
   backend-tests:
     name: 后端测试 (py${{ matrix.python-version }})
@@ -199,3 +222,54 @@ jobs:
               sys.exit(1)
           print(f"历史库已被接管，版本 {row[0]}")
           PY
+
+  docker-build:
+    name: 镜像构建与运行环境检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: |
+          # 开发机通常没有 Docker（本项目就是），所以「镜像能不能构建」「容器里
+          # 该有的工具在不在」只能在 CI 验证。此前这两点完全没被检查过。
+          docker build -t trm-ci-check .
+
+      - name: 容器内 pg_dump 可用
+        run: |
+          # PostgreSQL 自动备份依赖 pg_dump。Dockerfile 漏装 postgresql-client
+          # 会让备份永远失败，且只在凌晨 3 点发一条站内通知才暴露 ——
+          # 实测过这个缺陷，这里做真实镜像内的验证（而非只 grep Dockerfile）。
+          docker run --rm --entrypoint pg_dump trm-ci-check --version
+
+      - name: 容器内可执行启动引导与健康检查
+        run: |
+          # 用 SQLite 起容器（不依赖 db 服务），验证 db_bootstrap.py + uvicorn
+          # 这条真实启动链路能跑通，并确认 /api/health 可用。
+          docker run -d --name trm-ci -p 8000:8000 \
+            -e JWT_SECRET_KEY=ci-test-secret-key-not-for-production \
+            -e DATABASE_URL=sqlite:///./ci_docker.db \
+            -e SCHEDULER_ENABLED=0 \
+            -e WEB_CONCURRENCY=1 \
+            trm-ci-check
+
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/health || true)
+            if [ "$code" = "200" ]; then
+              echo "容器启动成功，/api/health = 200"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "容器未在 60s 内就绪，输出日志："
+          docker logs trm-ci
+          exit 1
+
+      - name: 收集容器日志（失败时）
+        if: failure()
+        run: docker logs trm-ci 2>&1 || true
+
+      - name: 清理
+        if: always()
+        run: docker rm -f trm-ci 2>/dev/null || true
