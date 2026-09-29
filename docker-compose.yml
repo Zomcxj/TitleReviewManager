@@ -54,6 +54,12 @@ services:
       BACKUP_INCLUDE_FILES: ${BACKUP_INCLUDE_FILES:-1}
       BACKUP_COMPRESS: ${BACKUP_COMPRESS:-1}
       BACKUP_DRILL_ENABLED: ${BACKUP_DRILL_ENABLED:-1}
+      # 备份成功后推送副本到异机/异盘的命令（默认空 = 关闭）。
+      # {backup_dir} 会被替换为本次备份目录，例：
+      #   BACKUP_SYNC_CMD="rsync -a --delete {backup_dir}/ /mnt/disk2/trm-backups/"
+      # 注意：备份含身份证扫描件，推送到云存储前先阅读 deployment.md 的 PII 提示
+      BACKUP_SYNC_CMD: ${BACKUP_SYNC_CMD:-}
+      BACKUP_SYNC_TIMEOUT: ${BACKUP_SYNC_TIMEOUT:-600}
       # 外部通知渠道（可选，未配置则只用站内通知）
       EXTERNAL_NOTIFY_TYPES: ${EXTERNAL_NOTIFY_TYPES:-status_change,sla_overdue,pool_recovery}
       EMAIL_NOTIFY_ENABLED: ${EMAIL_NOTIFY_ENABLED:-0}

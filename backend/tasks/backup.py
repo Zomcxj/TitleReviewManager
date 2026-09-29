@@ -98,6 +98,13 @@ def get_backup_dir() -> str:
     return os.getenv("BACKUP_DIR") or DEFAULT_BACKUP_DIR
 
 
+# 备份成功后推送副本的命令（BACKUP_SYNC_CMD，默认空 = 关闭）。
+# 模板中的 {backup_dir} 替换为本次备份目录；例：
+#   rsync -a --delete {backup_dir}/ /mnt/disk2/trm-backups/
+# 超时秒数（BACKUP_SYNC_TIMEOUT），防止挂死的同步命令拖住调度线程
+SYNC_TIMEOUT_SECONDS = _env_int("BACKUP_SYNC_TIMEOUT", 600)
+
+
 def is_enabled() -> bool:
     """自动备份是否启用（BACKUP_ENABLED，默认 1）"""
     return _env_flag("BACKUP_ENABLED", True)
@@ -454,25 +461,16 @@ def _cleanup_old(dest_dir: str, keep: int) -> list:
 
 
 # ---------------------------------------------------------------- 主流程
-def _notify_backup_failure(result: dict) -> None:
-    """备份失败时通知管理员。
+def _notify_admins(title: str, content: str) -> None:
+    """向所有管理员发送备份域告警（站内 + 已配置的外部渠道）。
 
-    此前备份失败只写日志 —— 日志没人看，等于失败被静默吞掉。备份是「数据全丢」
-    与「没事发生」之间唯一的防线，失败必须让人知道。
-
-    通知走站内 + 外部渠道（若已配置），失败只记日志，绝不影响备份流程本身。
+    备份域的失败（备份本身失败 / 副本推送失败）都走这里：日志没人主动看，
+    告警才能促成处理。告警自身失败只记日志，绝不影响备份流程。
     """
     try:
         from database import SessionLocal
         from models import User
         from routers.notifications import create_notification
-
-        error = result.get("error") or "未知原因"
-        title = "自动备份失败"
-        content = (
-            f"时间点 {result.get('timestamp')} 的自动备份失败：{error}。"
-            "请尽快检查备份目录磁盘空间与数据库连接，备份失效意味着数据无法恢复。"
-        )
 
         db = SessionLocal()
         try:
@@ -486,7 +484,7 @@ def _notify_backup_failure(result: dict) -> None:
                     related_id=None,
                 )
             db.commit()
-            logger.info(f"备份失败告警已通知 {len(admins)} 位管理员")
+            logger.info(f"备份告警「{title}」已通知 {len(admins)} 位管理员")
         except Exception:
             db.rollback()
             raise
@@ -494,7 +492,90 @@ def _notify_backup_failure(result: dict) -> None:
             db.close()
     except Exception as e:
         # 告警本身失败不能反过来影响备份结果
-        logger.error(f"发送备份失败告警时出错: {e}", exc_info=True)
+        logger.error(f"发送备份告警时出错: {e}", exc_info=True)
+
+
+def _notify_backup_failure(result: dict) -> None:
+    """备份失败时通知管理员。
+
+    此前备份失败只写日志 —— 日志没人看，等于失败被静默吞掉。备份是「数据全丢」
+    与「没事发生」之间唯一的防线，失败必须让人知道。
+    """
+    error = result.get("error") or "未知原因"
+    _notify_admins(
+        "自动备份失败",
+        f"时间点 {result.get('timestamp')} 的自动备份失败：{error}。"
+        "请尽快检查备份目录磁盘空间与数据库连接，备份失效意味着数据无法恢复。",
+    )
+
+
+def _notify_offsite_sync_failure(result: dict, error: str) -> None:
+    """副本推送失败必须告警：本地备份虽完好，但灾备能力仍是零，不能静默。"""
+    _notify_admins(
+        "备份副本同步失败",
+        f"时间点 {result.get('timestamp')} 的备份已在本机完成，"
+        f"但推送到异机/异盘失败：{error}。"
+        "本地备份与数据库仍在同一台机器上，宿主机损坏时两者一起丢失，请尽快处理同步通道。",
+    )
+
+
+def _run_offsite_sync(result: dict) -> None:
+    """备份成功后执行可选的副本推送命令（BACKUP_SYNC_CMD，默认关闭）。
+
+    背景：备份目录与数据库默认在同一台宿主机上，宿主机损坏两者皆失 ——
+    这是单机部署最大的单点。配置一条同步命令后，每次成功备份自动把副本
+    推到异机/异盘/对象存储，命令模板里的 {backup_dir} 会被替换为本次备份目录。
+
+    安全边界：命令以应用进程身份与权限执行，属管理员级配置
+    （与 DATABASE_URL / JWT_SECRET_KEY 同级信任）——它默认不配置、不执行任何东西。
+
+    契约：同步失败不推翻备份本身的成功（本地备份完好），但必须告警。
+    本函数绝不抛异常，与 run_backup 的整体契约一致。
+    """
+    cmd = (os.getenv("BACKUP_SYNC_CMD") or "").strip()
+    result["offsite_sync"] = None
+    if not cmd:
+        return
+
+    if "{backup_dir}" in cmd:
+        cmd = cmd.replace("{backup_dir}", result.get("backup_dir") or "")
+
+    started = time.time()
+    try:
+        # shell=True 是刻意选择：rsync/rclone 管道（如 age|rclone）离不开 shell。
+        # 命令来自管理员配置而非用户输入，与其它环境变量同级信任。
+        proc = subprocess.run(  # nosec B602
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=SYNC_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        error = f"同步命令超过 {SYNC_TIMEOUT_SECONDS}s 已终止"
+        logger.error(f"备份副本同步失败: {error}")
+        result["offsite_sync"] = {"ok": False, "error": error}
+        _notify_offsite_sync_failure(result, error)
+        return
+    except Exception as e:
+        logger.error(f"备份副本同步失败: {e}", exc_info=True)
+        result["offsite_sync"] = {"ok": False, "error": str(e)}
+        _notify_offsite_sync_failure(result, str(e))
+        return
+
+    duration = round(time.time() - started, 3)
+    if proc.returncode == 0:
+        result["offsite_sync"] = {"ok": True, "duration_seconds": duration}
+        logger.info(f"备份副本已推送（耗时 {duration}s）")
+        return
+
+    stderr_tail = (proc.stderr or "").strip()[-500:] or f"退出码 {proc.returncode}"
+    logger.error(f"备份副本同步失败（退出码 {proc.returncode}）: {stderr_tail}")
+    result["offsite_sync"] = {
+        "ok": False, "returncode": proc.returncode, "duration_seconds": duration,
+        "error": stderr_tail,
+    }
+    _notify_offsite_sync_failure(result, stderr_tail)
 
 
 def run_backup(include_files: bool = None) -> dict:
@@ -505,7 +586,7 @@ def run_backup(include_files: bool = None) -> dict:
 
     返回结果摘要：
     {"success", "db_backup", "files_backup", "manifest",
-     "duration_seconds", "error", "cleaned"}
+     "duration_seconds", "error", "cleaned", "offsite_sync"}
 
     数据库与文件备份任一失败都只记录在结果里，绝不抛异常（备份不能影响业务）。
     """
@@ -518,12 +599,14 @@ def run_backup(include_files: bool = None) -> dict:
     result = {
         "success": False,
         "timestamp": timestamp,
+        "backup_dir": dest_dir,
         "db_backup": None,
         "files_backup": None,
         "manifest": None,
         "duration_seconds": 0.0,
         "error": None,
         "cleaned": [],
+        "offsite_sync": None,
     }
 
     try:
@@ -611,6 +694,17 @@ def run_backup(include_files: bool = None) -> dict:
         result["cleaned"] = _cleanup_old(dest_dir, get_keep())
     except Exception as e:
         logger.warning(f"清理旧备份失败（不影响本次备份）: {e}")
+
+    # ---- 6) 推送副本到异机/异盘（BACKUP_SYNC_CMD 配置后启用，默认关闭）----
+    # 备份目录与数据库同在一台宿主机，宿主机损坏两者皆失——单机部署最大单点。
+    # 同步失败不推翻备份成功（本地备份完好），但会向管理员告警。
+    if result["success"]:
+        try:
+            _run_offsite_sync(result)
+        except Exception as e:
+            # 与 run_backup「绝不抛异常」契约一致：同步通道自身异常不得击穿备份
+            logger.error(f"副本推送执行异常: {e}", exc_info=True)
+            result["offsite_sync"] = {"ok": False, "error": str(e)}
 
     if result["success"]:
         logger.info(

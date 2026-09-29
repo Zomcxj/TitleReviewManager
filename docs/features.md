@@ -256,7 +256,8 @@
 - **schema 权威统一到 Alembic**：启动只做只读漂移检测（发现库结构与模型不一致时
   打告警日志），不执行任何 DDL；历史库（`create_all` 建出、无版本记录）由
   `db_bootstrap.py` 自动接管后再迁移，人工补救走 `python db_bootstrap.py --repair`
-- 自动备份（每日，`pg_dump` / sqlite3 一致性快照）+ 恢复演练，失败向管理员发通知
+- 自动备份（每日，`pg_dump` / sqlite3 一致性快照）+ 恢复演练，失败向管理员发通知；
+  可选 `BACKUP_SYNC_CMD` 在每次备份成功后把副本推送到异机/异盘（推送失败单独告警）
 - 前端 Vite 热更新 / 生产构建
 - CORS 白名单配置
 - 全局异常处理

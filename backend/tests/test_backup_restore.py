@@ -11,6 +11,7 @@
 - 路径穿越防护
 - 保留份数清理
 - 备份失败告警
+- 异机/异盘副本推送（BACKUP_SYNC_CMD 钩子）
 
 所有测试使用临时目录与临时数据库，绝不触碰开发库 title_service.db。
 """
@@ -18,7 +19,9 @@ import gzip
 import json
 import os
 import sqlite3
+import subprocess
 import tarfile
+import types
 from datetime import datetime, timedelta
 
 import pytest
@@ -48,6 +51,9 @@ def fixture_backup_env(tmp_path, monkeypatch):
     monkeypatch.setenv("BACKUP_COMPRESS", "1")
     monkeypatch.setenv("BACKUP_INCLUDE_FILES", "1")
     monkeypatch.setenv("BACKUP_ENABLED", "1")
+    # 同步钩子必须显式按测试需要打开：开发者机器的 .env 若配了它，
+    # 会让所有「默认关闭」的断言失效
+    monkeypatch.delenv("BACKUP_SYNC_CMD", raising=False)
     monkeypatch.setattr("storage.get_storage_root", lambda: str(storage_root))
 
     # 建一个带业务数据的源库
@@ -672,3 +678,131 @@ class TestTableNameValidation:
         """常量表名必须全部通过校验（否则恢复流程会自己把自己拦下）"""
         for name in restore_task.CRITICAL_TABLES:
             assert restore_task._safe_ident(name) == name
+
+
+class TestOffsiteSync:
+    """异机/异盘副本推送（BACKUP_SYNC_CMD 钩子）。
+
+    背景：备份目录与数据库默认同在一台宿主机，宿主机损坏两者皆失。
+    钩子让每次成功备份后把副本推到任意目标；这里验证它的全部契约：
+    默认关闭、占位符替换、失败不推翻备份成功、失败必须告警、绝不抛异常。
+    """
+
+    @staticmethod
+    def _fake_subprocess(monkeypatch, returncode=0, stderr="", exc=None):
+        """替身 subprocess：记录收到的命令，返回预设结果或抛预设异常。"""
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if exc is not None:
+                raise exc
+            return types.SimpleNamespace(returncode=returncode, stdout="", stderr=stderr)
+
+        monkeypatch.setattr(
+            backup_task, "subprocess",
+            types.SimpleNamespace(run=fake_run, TimeoutExpired=subprocess.TimeoutExpired),
+        )
+        return calls
+
+    @staticmethod
+    def _captured_alerts(monkeypatch):
+        alerts = []
+        monkeypatch.setattr(
+            backup_task, "_notify_admins",
+            lambda title, content: alerts.append((title, content)),
+        )
+        return alerts
+
+    def test_disabled_by_default_never_spawns_process(self, backup_env, monkeypatch):
+        """不配置 BACKUP_SYNC_CMD 时必须零开销：一个进程都不该被拉起。"""
+        calls = self._fake_subprocess(
+            monkeypatch,
+            exc=AssertionError("未配置同步命令时不应调用 subprocess"),
+        )
+        result = _run_backup()
+        assert result["success"] is True
+        assert result["offsite_sync"] is None
+        assert calls == []
+
+    def test_placeholder_replaced_with_backup_dir(self, backup_env, monkeypatch):
+        cmd_tpl = "rsync -a {backup_dir}/ /mnt/disk2/"
+        monkeypatch.setenv("BACKUP_SYNC_CMD", cmd_tpl)
+        calls = self._fake_subprocess(monkeypatch)
+        result = _run_backup()
+
+        assert result["success"] is True
+        assert len(calls) == 1
+        assert "{backup_dir}" not in calls[0], "占位符必须被替换"
+        assert str(backup_env["backup_dir"]) in calls[0]
+
+    def test_success_recorded_without_alert(self, backup_env, monkeypatch):
+        monkeypatch.setenv("BACKUP_SYNC_CMD", "true")
+        self._fake_subprocess(monkeypatch, returncode=0)
+        alerts = self._captured_alerts(monkeypatch)
+        result = _run_backup()
+
+        assert result["success"] is True
+        assert result["offsite_sync"]["ok"] is True
+        assert "duration_seconds" in result["offsite_sync"]
+        assert alerts == [], "同步成功不应触发任何告警"
+
+    def test_failure_keeps_backup_success_and_alerts(self, backup_env, monkeypatch):
+        """本地备份是成功的；副本推不出去只降级为告警，不能推翻备份本身。"""
+        monkeypatch.setenv("BACKUP_SYNC_CMD", "rsync -a {backup_dir}/ nosuchhost:/x/")
+        self._fake_subprocess(monkeypatch, returncode=23, stderr="rsync: connection refused")
+        alerts = self._captured_alerts(monkeypatch)
+        result = _run_backup()
+
+        assert result["success"] is True, "同步失败不能推翻本地备份的成功"
+        assert result["offsite_sync"]["ok"] is False
+        assert result["offsite_sync"]["returncode"] == 23
+        assert "connection refused" in result["offsite_sync"]["error"]
+        assert len(alerts) == 1
+        title, content = alerts[0]
+        assert title == "备份副本同步失败"
+        assert "connection refused" in content
+
+    def test_timeout_alerts_and_keeps_backup_success(self, backup_env, monkeypatch):
+        monkeypatch.setenv("BACKUP_SYNC_CMD", "rclone copy {backup_dir} remote:x")
+        self._fake_subprocess(
+            monkeypatch,
+            exc=subprocess.TimeoutExpired(cmd="rclone", timeout=600),
+        )
+        alerts = self._captured_alerts(monkeypatch)
+        result = _run_backup()
+
+        assert result["success"] is True
+        assert result["offsite_sync"]["ok"] is False
+        assert "600" in result["offsite_sync"]["error"]
+        assert len(alerts) == 1
+
+    def test_hook_exception_never_breaks_backup(self, backup_env, monkeypatch):
+        """run_backup 的「绝不抛异常」契约对同步通道同样成立。"""
+        monkeypatch.setenv("BACKUP_SYNC_CMD", "whatever")
+
+        def boom(*a, **k):
+            raise RuntimeError("同步通道内部炸了")
+
+        monkeypatch.setattr(backup_task, "_run_offsite_sync", boom)
+        result = _run_backup()
+
+        assert result["success"] is True
+        assert result["offsite_sync"]["ok"] is False
+        assert "同步通道内部炸了" in result["offsite_sync"]["error"]
+
+    def test_failed_backup_does_not_trigger_sync(self, backup_env, monkeypatch):
+        """备份失败时不推送残缺副本 —— 推一份坏备份出去比不推更危险。"""
+        monkeypatch.setenv("BACKUP_SYNC_CMD", "true")
+        # 让数据库备份阶段失败：DATABASE_URL 指向不存在的目录，connect 必然报错。
+        # backup.py 的 _db_url() 是在调用时才 from database import DATABASE_URL，
+        # 所以改 database 模块属性即可生效（与 backup_env fixture 同一手法）。
+        monkeypatch.setattr(
+            "database.DATABASE_URL",
+            f"sqlite:///{backup_env['tmp_path']}/nonexistent_dir/x.db",
+        )
+        calls = self._fake_subprocess(monkeypatch)
+        result = _run_backup()
+
+        assert result["success"] is False
+        assert calls == [], "失败的备份不应触发副本推送"

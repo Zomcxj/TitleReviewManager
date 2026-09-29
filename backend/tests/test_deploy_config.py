@@ -48,6 +48,7 @@ def _env_var_names_read_by_code() -> set:
         re.compile(r'os\.getenv\(\s*"([A-Z][A-Z0-9_]*)"'),
         re.compile(r'os\.environ(?:\.get)?[\(\[]\s*"([A-Z][A-Z0-9_]*)"'),
         re.compile(r'_env_flag\(\s*"([A-Z][A-Z0-9_]*)"'),
+        re.compile(r'_env_int\(\s*"([A-Z][A-Z0-9_]*)"'),
     ]
     for py in BACKEND_DIR.rglob("*.py"):
         # 测试自身不算部署配置的读取方

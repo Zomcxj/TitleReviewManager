@@ -328,6 +328,8 @@ BACKUP_KEEP="7"             # 保留份数
 BACKUP_HOUR="3"             # 每天几点执行（0-23）
 BACKUP_INCLUDE_FILES="1"    # 是否一并备份材料文件
 BACKUP_COMPRESS="1"         # 是否 gzip 压缩
+BACKUP_SYNC_CMD=""          # 备份成功后推送副本的命令，默认空 = 关闭
+BACKUP_SYNC_TIMEOUT="600"   # 同步命令超时秒数
 ```
 
 > **Docker 部署注意**：`docker-compose.yml` 已把上述变量逐个转发给容器（compose 不使用
@@ -340,6 +342,43 @@ BACKUP_COMPRESS="1"         # 是否 gzip 压缩
 > ```
 
 管理员也可在界面「数据备份」页查看配置、手动触发、浏览历史备份。
+
+#### 异机/异盘副本（强烈建议配置）
+
+默认配置下，备份目录与数据库**在同一台机器上**：宿主机磁盘损坏或整机故障时，
+数据库和备份一起丢失，等于没有灾备。应用内自动备份做得再好（一致性快照、恢复
+演练、失败告警）也只解决「备份可用」，不解决「备份可存活」。
+
+配置 `BACKUP_SYNC_CMD` 后，每次成功备份会自动执行该命令推送副本；
+模板中的 `{backup_dir}` 替换为本次备份目录。推送失败不会推翻备份本身，
+但会向所有管理员发送站内告警（标题「备份副本同步失败」）。
+
+```bash
+# 方案 A：第二块数据盘（机器里有的话，最简单）
+BACKUP_SYNC_CMD="rsync -a --delete {backup_dir}/ /mnt/disk2/trm-backups/"
+
+# 方案 B：内网第二台机器（推荐「拉」模式，见下方说明）
+BACKUP_SYNC_CMD="rsync -a --delete {backup_dir}/ backup@192.168.1.50:/srv/trm-backups/"
+```
+
+> **方案 B 建议「拉」而非「推」**：让备份机持有 SSH 凭据定期来服务器拉取
+> （备份机 cron：`rsync -a app@server:/data/backups/ /srv/trm-backups/`），
+> 生产机上不存放备份机的密钥——即使生产机被入侵，攻击者也拿不到备份。
+
+> **不要推送到云对象存储（OSS/COS/S3 等），除非你明确接受以下代价**：
+> 备份包含身份证扫描件等敏感个人信息，推上云意味着数据离开本域，
+> 与本项目「敏感材料全程不出本域」的原则冲突。确实只有云可用的前提下，
+> 必须先用 age/gpg 在本地加密、只推密文，且密钥绝不放云端：
+> ```bash
+> # 加密后再推（示例：打包整个备份目录为单文件密文）
+> BACKUP_SYNC_CMD="tar -C {backup_dir} -cz . | age -r <公钥> | rclone rcat remote:trm-backups/latest.tar.gz.age"
+> ```
+
+从异机副本恢复：先把副本文件拷回 `BACKUP_DIR`（连同 `manifest_*.json`），
+再按下方「恢复步骤」先 `--drill` 演练、确认可用后 `--restore-db`。
+
+> 同步命令以应用进程的权限执行，属管理员级配置——它能做应用进程能做的任何事，
+> 不要配置来路不明的命令。
 
 #### 恢复步骤
 
