@@ -267,14 +267,44 @@ docker compose logs -f backend     # 观察迁移与调度器启动日志
 ### 3. 上线自检
 
 ```bash
-curl http://localhost:8000/api/health          # 基础探针
-curl http://localhost:8000/api/health/detail   # 配置自检（会提示弱密钥/存储不可写等问题）
+curl http://localhost:8000/api/health          # 基础探针（匿名可用）
 ```
 
-`/api/health/detail` 会检查：数据库连通性与类型、JWT 密钥强度、存储目录可写、
-外部通知渠道、系统配置可读性、调度器状态。生产环境应全部为 `OK`。
+配置自检：**管理员登录后**用浏览器打开 `http://<地址>/api/health/detail`
+（鉴权走 cookie，和操作界面同一套登录态）。它会检查：数据库连通性与类型、
+JWT 密钥强度、存储目录可写、外部通知渠道、系统配置可读性、调度器状态，
+某项不 OK 会给出具体建议。生产环境应全部为 `OK`。
 
-### 4. 数据库迁移
+> 该端点需要管理员登录是刻意的：它会暴露密钥强度、存储路径等基础设施信息，
+> 而本服务有外网可达地址（客户注册链接），匿名开放等于给攻击者送侦察情报。
+
+### 4. 外部拨测（强烈建议，10 分钟配完）
+
+应用内的告警（备份失败、SLA 超时）都由应用自己发出——**服务挂了就一条也发不出**。
+Docker 的 healthcheck 只会重启容器，不会通知任何人。「服务器死了没人知道」
+必须靠外部拨测解决：让一个跑在别处的探针定期请求 `/api/health`，失败就通知你。
+
+由于客户要通过注册链接自助访问，本服务必然有外网可达地址（即 `PUBLIC_URL`），
+因此免费的第三方拨测即可覆盖，**不需要自备第二台机器**：
+
+| 探针服务 | 说明 |
+|----------|------|
+| 阿里云云监控 · 站点监控 | 国内可达性好，免费额度够用，支持短信/电话/钉钉告警 |
+| UptimeRobot / Uptime Kuma | 免费额度 50 个探针；Kuma 开源可自建 |
+
+配置要点：
+
+- 探测 URL：`https://<你的域名>/api/health`，期望 HTTP 200 且响应含 `"status":"ok"`
+- 频率：1~5 分钟一次
+- 告警通道：探针服务自己的邮件/短信/IM 推送（与本项目无关，配在探针侧）
+- **不要**把拨测指向 `/api/health/detail`：它需要管理员登录，探针只会拿到 401
+
+> 拨测解决「服务死了」，应用内告警解决「服务活着但出事」。两者互补，缺一不可：
+> 备份失败这类告警走站内 + 外部渠道（`WEBHOOK_NOTIFY_ENABLED` /
+> `EMAIL_NOTIFY_ENABLED`，见 `.env.example`），推到企业微信/钉钉/飞书机器人后
+> 管理员不用登录系统也能看到。
+
+### 5. 数据库迁移
 
 ```bash
 docker compose exec backend alembic current    # 当前版本
@@ -300,7 +330,7 @@ docker compose exec backend alembic upgrade head
 > `python db_bootstrap.py --repair` 显式补齐缺失的列与索引（只增不删，不动既有数据）。
 > **默认不带 `--repair` 时全程只读** —— 不会在启动时静默改结构。
 
-### 5. 定时任务
+### 6. 定时任务
 
 内置调度器默认开启（每 60 分钟执行 SLA 回收/超时提醒/临期提醒 + 清理过期登录记录）。
 多 worker 场景下通过文件锁保证同一时刻只有一个 worker 执行。
@@ -311,7 +341,7 @@ docker compose exec backend alembic upgrade head
 0 2 * * * cd /app && python tasks/sla_scheduler.py
 ```
 
-### 6. 数据备份
+### 7. 数据备份
 
 **已内置自动备份**（默认每天凌晨 3 点，随内置调度器执行）：
 
@@ -438,14 +468,14 @@ docker compose start backend
 >
 > 外部 cron 方式：`BACKUP_ENABLED=0` 关闭内置，改为 `python tasks/backup.py`。
 
-### 7. 安全建议
+### 8. 安全建议
 
 - 默认种子账号（admin/admin123 等）**仅供开发**，生产环境请立即改密码或不要执行 `seed.py`
 - 建议在反向代理（Nginx/Caddy）上启用 HTTPS，并设置 `PUBLIC_URL` 为 https 地址
 - 数据库端口不要暴露到公网（compose 已默认不映射）
 - 定期检查 `/api/audit` 中的「登录失败」记录
 
-### 8. HTTPS 与反向代理
+### 9. HTTPS 与反向代理
 
 生产环境务必走 HTTPS（内部系统的客户材料含身份证扫描件，明文传输不可接受）。
 
@@ -501,7 +531,7 @@ PUBLIC_URL="https://your-domain.com"
 > `environment` 段转发 `TRUST_PROXY` / `FORCE_HTTPS` / `COOKIE_SECURE` /
 > `ENABLE_HSTS`（默认均为 `0`，即直连安全默认值）。
 
-### 9. 依赖漏洞扫描（CI）
+### 10. 依赖漏洞扫描（CI）
 
 `.github/workflows/security.yml` 已配置，包含五个任务：
 

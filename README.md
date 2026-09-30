@@ -59,7 +59,8 @@ cd frontend && npm run test:run       # 前端 Vitest（test:run 跑一次即退
 ```bash
 cp .env.example .env             # 数据库密码等必填项未设置会拒绝启动
 docker-compose up -d --build
-curl http://localhost:8000/api/health/detail   # 部署自检
+curl http://localhost:8000/api/health           # 部署自检（匿名探针）
+# 配置自检（密钥强度/存储可写等）：管理员登录后浏览器打开 /api/health/detail
 ```
 
 > `.env` 中新增的任何变量都需同步加到 `docker-compose.yml` 的 `environment` 段

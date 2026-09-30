@@ -3,13 +3,14 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from auth import get_current_user
 from database import Base, engine
 from routers import (
     applications,
@@ -132,7 +133,11 @@ if os.path.exists(frontend_dir):
 
 @app.get("/api/health")
 async def health():
-    """基础健康检查（供容器 HEALTHCHECK / 负载均衡探针使用，无需鉴权）"""
+    """基础健康检查（供容器 HEALTHCHECK / 外部拨测使用，无需鉴权）。
+
+    异常细节只进日志、不回给调用方：该端点对外可达（外部拨测会打它），
+    把数据库异常原文返回出去等于向公网泄露基础设施信息。
+    """
     try:
         from database import SessionLocal
         db = SessionLocal()
@@ -140,16 +145,23 @@ async def health():
         db.close()
         return {"status": "ok", "database": "connected", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as e:
-        return {"status": "error", "database": str(e), "timestamp": datetime.now(timezone.utc).isoformat()}
+        logger.error(f"健康检查失败（数据库异常，详情见日志）: {e}", exc_info=True)
+        return {"status": "error", "database": "unavailable", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/api/health/detail")
-async def health_detail():
+async def health_detail(current_user: dict = Depends(get_current_user)):
     """详细健康与配置自检（供运维排查，不含敏感值）。
+
+    需要管理员登录：该端点会暴露 JWT 密钥强度、存储路径、调度器状态等
+    基础设施信息，而服务有外网可达地址（客户注册链接）—— 匿名可访问等于
+    给攻击者送侦察情报。浏览器以管理员登录后直接访问即可（cookie 鉴权）。
 
     上线后最常踩的坑是「配置没生效却不知道」——比如 JWT 密钥用的是默认值、
     存储目录不可写、外部通知配了但发不出去。这里主动做一次自检并给出建议。
     """
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="只有管理员可以查看配置自检")
     import os as _os
 
     from database import DATABASE_URL, SessionLocal

@@ -507,10 +507,10 @@ const groups: GuideGroup[] = [
       {
         emoji: '🩺',
         title: '部署健康自检',
-        path: 'GET /api/health/detail（浏览器直接访问）',
+        path: 'GET /api/health/detail（管理员登录后浏览器访问）',
         desc: '上线后排查"配置没生效却不知道"的问题，访问自检接口即可。',
         steps: [
-          '浏览器打开 /api/health/detail（无需登录）',
+          '浏览器打开 /api/health/detail（需管理员登录；该页暴露密钥强度与存储路径，不对外开放）',
           '检查项：数据库连通性与类型（生产建议 PostgreSQL）、JWT 密钥强度、存储目录可写、外部通知渠道、系统配置可读、调度器状态',
           '某项不 OK 会给出具体建议（如"当前为默认弱密钥，请立即更换"）',
           'HTTPS/反代相关：TRUST_PROXY、FORCE_HTTPS、COOKIE_SECURE 见 docs/deployment.md',
