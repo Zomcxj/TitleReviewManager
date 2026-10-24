@@ -1,9 +1,10 @@
 """
-材料退回原因统计
+Material return-for-revision statistics
 
-业务价值：哪些材料最常被退回，是提升通过率的关键线索。
-统计后可反推给业务员做预防（例如"业绩成果"退回率最高，
-就该在上传前重点检查），也能评估业务员材料准备质量。
+Business value: which materials get returned most often is the key clue to raising
+approval rates. The stats can feed back to salesmen for prevention (e.g. if
+"performance achievements" has the highest return rate, it deserves extra checks
+before upload), and also help assess how well each salesman prepares materials.
 """
 import logging
 from datetime import timedelta
@@ -18,21 +19,21 @@ def get_rejection_stats(
     days: int | None = 90,
     salesman_id: int | None = None,
 ) -> dict:
-    """材料退回原因统计。
+    """Return-for-revision statistics by material.
 
     Args:
-        days: 统计最近多少天（None 表示全部）
-        salesman_id: 只看某业务员名下客户（None 表示全部）
+        days: look back this many days (None means all)
+        salesman_id: only customers under this salesman (None means all)
 
     Returns:
         {
-          "total_reviews": 审核总数,
-          "total_rejected": 退回总数,
-          "reject_rate": 退回率,
-          "by_category": [{category, rejected, total, rate}],   # 按材料类别
-          "by_issue_type": [{issue_type, count, rate}],          # 按问题类型
-          "by_salesman": [{salesman_id, name, rejected, total, rate}],  # 按业务员
-          "trend": [{date, rejected}],                           # 近 N 天趋势
+          "total_reviews": total reviews,
+          "total_rejected": total returned,
+          "reject_rate": return rate,
+          "by_category": [{category, rejected, total, rate}],   # by material category
+          "by_issue_type": [{issue_type, count, rate}],          # by issue type
+          "by_salesman": [{salesman_id, name, rejected, total, rate}],  # by salesman
+          "trend": [{date, rejected}],                           # trend over the last N days
         }
     """
     from sqlalchemy import func
@@ -43,7 +44,7 @@ def get_rejection_stats(
     if days:
         since = utcnow() - timedelta(days=days)
 
-    # 基础查询：材料级审核记录（排除 application 级的批量审核记录）
+    # Base query: material-level review records (excluding application-level batch reviews)
     base = (
         db.query(Review, Material, Application, Customer)
         .join(Material, Review.material_id == Material.id)
@@ -58,7 +59,7 @@ def get_rejection_stats(
 
     rejected_rows = base.all()
 
-    # 审核总数（含通过）用于算退回率
+    # Total reviews (approved included) used to compute the return rate
     total_q = (
         db.query(func.count(Review.id))
         .join(Material, Review.material_id == Material.id)
@@ -73,7 +74,7 @@ def get_rejection_stats(
     total_reviews = total_q.scalar() or 0
     total_rejected = len(rejected_rows)
 
-    # 按材料类别
+    # By material category
     cat_rejected: dict[str, int] = {}
     cat_total: dict[str, int] = {}
     all_q = (
@@ -102,7 +103,7 @@ def get_rejection_stats(
             "rate": round(rej / total * 100, 1) if total else 0.0,
         })
 
-    # 按问题类型
+    # By issue type
     issue_count: dict[str, int] = {}
     for r, _m, _a, _c in rejected_rows:
         key = r.issue_type or "未分类"
@@ -112,7 +113,7 @@ def get_rejection_stats(
         for k, v in sorted(issue_count.items(), key=lambda x: -x[1])
     ]
 
-    # 按业务员
+    # By salesman
     sales_rejected: dict[int, int] = {}
     sales_total: dict[int, int] = {}
     for _r, _m, _a, c in rejected_rows:
@@ -145,7 +146,7 @@ def get_rejection_stats(
             "rate": round(rej / total * 100, 1) if total else 0.0,
         })
 
-    # 趋势（近 30 天，或 days 内最多 30 天）
+    # Trend (last 30 days, or at most 30 days within the given window)
     trend_days = min(days or 30, 30)
     trend_start = utcnow() - timedelta(days=trend_days - 1)
     daily: dict[str, int] = {}

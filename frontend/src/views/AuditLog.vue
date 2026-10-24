@@ -248,7 +248,7 @@ async function handleExport() {
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
   } catch (e: any) {
-    // blob 响应下错误体也是 blob，需要异步解析出 detail
+    // With a blob response, the error body is also a blob and must be parsed asynchronously to extract the detail
     let detail = ''
     const blob = e.response?.data
     if (blob instanceof Blob) {
@@ -278,13 +278,13 @@ function getCustomerName(row: Log): string {
     const newVal = typeof row.new_value === 'string' ? JSON.parse(row.new_value) : row.new_value
     if (newVal?.name) return newVal.name
   } catch {
-    // 历史数据可能不是合法 JSON，解析失败时尝试下一个来源
+    // Historical data may not be valid JSON; on parse failure, try the next source
   }
   try {
     const oldVal = typeof row.old_value === 'string' ? JSON.parse(row.old_value) : row.old_value
     if (oldVal?.name) return oldVal.name
   } catch {
-    // 两个来源都取不到，返回空串由调用方展示占位
+    // Neither source yields a name; return an empty string and let the caller show a placeholder
   }
   return ''
 }

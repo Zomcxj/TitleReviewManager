@@ -24,7 +24,7 @@ async def list_pending_reviews(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """内部待审核队列（按待审材料与审核 SLA 排序）。"""
+    """Internal pending-review queue (ordered by pending materials and review SLA)."""
     from utils.workbench import list_pending_reviews as _list
     return _list(db, current_user, status=status, limit=200)
 
@@ -32,7 +32,7 @@ async def list_pending_reviews(
 @router.get("/application/{application_id}")
 async def get_application_reviews(application_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
-    # 数据隔离：业务员只能查看自己名下客户的审核记录
+    # Data isolation: salesmen can only view review records of their own customers
     from utils.data_scope import assert_can_access_application
     assert_can_access_application(db, user, application_id)
     reviews = db.query(Review).filter(Review.application_id == application_id).all()
@@ -42,7 +42,7 @@ async def get_application_reviews(application_id: int, request: Request, db: Ses
 @router.get("/material/{material_id}")
 async def get_material_reviews(material_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
-    # 数据隔离：业务员只能查看自己名下客户材料的审核记录
+    # Data isolation: salesmen can only view review records of their own customers' materials
     from utils.data_scope import assert_can_access_material
     assert_can_access_material(db, user, material_id)
     reviews = db.query(Review).filter(Review.material_id == material_id).all()
@@ -74,26 +74,38 @@ async def create_review(
         ext = os.path.splitext(review_file.filename)[1].lower()
         if ext not in ALLOWED_FILE_EXTENSIONS:
             raise HTTPException(status_code=400, detail=f"不支持的文件类型：{ext}")
-        if review_file.size is not None:
-            # 优先使用请求声明的文件大小，超限时不再读取内容
-            if review_file.size > MAX_FILE_SIZE:
-                raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
-            content = await review_file.read()
-        else:
-            content = await review_file.read()
-            if len(content) > MAX_FILE_SIZE:
-                raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
+        # Size check BEFORE reading any content: an oversized upload is rejected
+        # without buffering it
+        if review_file.size is not None and review_file.size > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
         from utils.upload_guard import validate_file_content
-        content_err = validate_file_content(review_file.filename, content)
+        head = await review_file.read(64)
+        if not head and (review_file.size or 0) > 0:
+            raise HTTPException(status_code=400, detail="文件内容为空")
+        content_err = validate_file_content(review_file.filename, head)
         if content_err:
             raise HTTPException(status_code=400, detail=content_err)
+        await review_file.seek(0)  # rewind so the chunked write starts from the beginning
         unique_name = f"review_{uuid.uuid4().hex}{ext}"
         app_dir = os.path.join(UPLOAD_DIR, str(application_id or "reviews"))
         os.makedirs(app_dir, exist_ok=True)
         review_file_path = f"uploads/{application_id or 'reviews'}/{unique_name}"
         full_path = os.path.join(BASE_DIR, review_file_path)
-        with open(full_path, "wb") as f:
-            f.write(content)
+        # Chunked write: peak memory is one 1MB chunk instead of the whole file
+        written = 0
+        try:
+            with open(full_path, "wb") as f:
+                while True:
+                    chunk = await review_file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > MAX_FILE_SIZE:
+                        raise ValueError("size cap exceeded")
+                    f.write(chunk)
+        except ValueError:
+            os.remove(full_path)  # a truncated file is worse than no file
+            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB") from None
 
     review = Review(
         material_id=material_id,
@@ -126,10 +138,10 @@ async def create_review(
     db.commit()
     db.refresh(review)
 
-    # 取材料名称供通知使用
+    # Fetch the material name for notifications
     material_name = material.category if material else ""
 
-    # 单条退回/通过时发送通知给业务员和管理员
+    # Send notifications to the salesman and admins on single return/pass
     if application_id and result in ("退回", "通过") and material_id:
         app = db.query(Application).filter(Application.id == application_id).first()
         if app:
@@ -167,7 +179,7 @@ async def create_review(
                     related_type="material",
                     related_id=material_id,
                 )
-        # create_notification 只入会话不提交，此处统一提交通知
+        # create_notification only adds to the session without committing; commit notifications here
         db.commit()
 
     return ReviewResponse.model_validate(review).model_dump()
@@ -198,7 +210,7 @@ async def batch_review(
     if overall_result not in ("通过", "退回"):
         raise HTTPException(status_code=400, detail="无效的审核结果")
 
-    # 状态机对齐：通过与退回分别校验当前状态
+    # State machine alignment: validate the current status separately for pass and return
     if overall_result == "通过":
         if app.status not in ("完成资料", "资料补充"):
             raise HTTPException(
@@ -246,7 +258,7 @@ async def batch_review(
             detail_material_id = detail.get("material_id")
             if not detail_material_id:
                 continue
-            # 只允许标记属于该申报批次的材料
+            # Only allow flagging materials that belong to this application
             m = db.query(Material).filter(
                 Material.id == detail_material_id,
                 Material.application_id == application_id,
@@ -274,7 +286,7 @@ async def batch_review(
         )
         db.add(log)
 
-    # 发送通知
+    # Send notifications
     customer = app.customer
     if customer and customer.assigned_salesman_id:
         if overall_result == "通过":
@@ -320,11 +332,11 @@ async def download_review_attachment(
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """审核附件鉴权下载（/uploads 静态挂载已移除，统一走此端点）"""
+    """Authenticated download of review attachments (the /uploads static mount has been removed; this endpoint is the unified path)"""
     review = db.query(Review).filter(Review.id == review_id).first()
     if not review or not review.review_file_path:
         raise HTTPException(status_code=404, detail="附件不存在")
-    # 数据隔离：审核附件可能含客户材料影像
+    # Data isolation: review attachments may contain customer material images
     if review.application_id:
         from utils.data_scope import assert_can_access_application
         assert_can_access_application(db, user, review.application_id)

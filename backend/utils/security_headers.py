@@ -1,24 +1,27 @@
 """
-安全响应头中间件
+Security response header middleware
 
-浏览器默认行为对内部管理系统并不够安全：
-- 缺少 CSP 时，一旦有 XSS 注入就能任意加载外部脚本、外发客户资料
-- 缺少 X-Frame-Options 时，页面可被嵌套进第三方 iframe 做点击劫持
-  （本系统有"通过/退回"这类一键操作，点击劫持后果直接）
-- 缺少 nosniff 时，浏览器可能把上传的 .pdf 当 HTML 解析执行
+Default browser behavior is not safe enough for an internal management system:
+- Without CSP, a single XSS injection can load arbitrary external scripts and
+  exfiltrate customer data
+- Without X-Frame-Options, pages can be embedded in third-party iframes for
+  clickjacking (this system has one-click actions like "approve/return", so the
+  impact is direct)
+- Without nosniff, browsers may parse an uploaded .pdf as HTML and execute it
 
-这里统一注入响应头。CSP 需兼顾前端实际用到的能力：
-Vue 运行时、Element Plus 的 inline style、图片 blob/data 预览、PDF iframe 预览。
+This module injects the headers uniformly. The CSP must accommodate what the
+frontend actually uses: the Vue runtime, Element Plus inline styles, image
+blob/data previews, and PDF iframe previews.
 """
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-# 允许的前端能力：
-# - script-src 'self'：Vite 产物为本地文件，无需 inline script
-# - style-src 'unsafe-inline'：Element Plus 运行时注入内联样式，必须放行
-# - img-src blob: data:：材料图片预览用 blob URL
-# - frame-src 'self' blob:：PDF 预览用 iframe 加载同源下载接口
-# - connect-src 'self'：接口与进度查询都在同源
+# Allowed frontend capabilities:
+# - script-src 'self': Vite output is local files, no inline script needed
+# - style-src 'unsafe-inline': Element Plus injects inline styles at runtime, must be allowed
+# - img-src blob: data:: material image previews use blob URLs
+# - frame-src 'self' blob:: PDF previews load the same-origin download endpoint in an iframe
+# - connect-src 'self': API and progress polling are same-origin
 CSP_POLICY = (
     "default-src 'self'; "
     "script-src 'self'; "
@@ -37,7 +40,7 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
-    "X-XSS-Protection": "0",  # 现代浏览器已废弃该头，显式关闭避免旧版误拦截
+    "X-XSS-Protection": "0",  # Deprecated by modern browsers; explicitly off so legacy versions do not misfire
     "Permissions-Policy": "geolocation=(), microphone=(), camera=(), payment=()",
     "Cross-Origin-Opener-Policy": "same-origin",
     "Content-Security-Policy": CSP_POLICY,
@@ -45,14 +48,14 @@ SECURITY_HEADERS = {
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """为所有响应注入安全头。"""
+    """Inject security headers into every response."""
 
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         for key, value in SECURITY_HEADERS.items():
-            # 不覆盖业务已显式设置的同名头
+            # Do not override headers the business code has explicitly set
             response.headers.setdefault(key, value)
-        # 生产环境走 HTTPS 时启用 HSTS（由环境变量显式开启，避免本地开发被强制跳转）
+        # Enable HSTS in production behind HTTPS (opt-in via env var, so local dev is not force-redirected)
         import os
         if os.getenv("ENABLE_HSTS", "0") not in ("0", "false", "False"):
             response.headers.setdefault(
@@ -62,16 +65,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class HttpsRedirectMiddleware(BaseHTTPMiddleware):
-    """强制 HTTPS 跳转（FORCE_HTTPS=1 时生效）。
+    """Force HTTPS redirects (active when FORCE_HTTPS=1).
 
-    通常由 Nginx/Caddy 层做跳转更高效；这里提供应用层兜底，
-    适合直接暴露应用端口或代理未配置跳转的场景。
+    Redirecting at the Nginx/Caddy layer is usually more efficient; this provides an
+    application-level fallback for setups that expose the app port directly or whose
+    proxy is not configured to redirect.
 
-    健康检查路径豁免：容器 HEALTHCHECK 走的是容器内 http，
-    若被跳转会导致探针一直失败、容器被反复重启。
+    Health check path exemption: the container HEALTHCHECK uses in-container http;
+    if redirected, the probe would keep failing and the container would restart repeatedly.
     """
 
-    # 不需要跳转的路径前缀（探针必须豁免）
+    # Path prefixes exempt from redirecting (health probes must be exempt)
     EXEMPT_PREFIXES = ("/api/health",)
 
     async def dispatch(self, request: Request, call_next):
@@ -80,7 +84,7 @@ class HttpsRedirectMiddleware(BaseHTTPMiddleware):
             from utils.request_context import is_https_request
             path = request.url.path
             if not any(path.startswith(p) for p in self.EXEMPT_PREFIXES) and not is_https_request(request):
-                # 保留原始 host 与查询串，跳转到 https
+                # Keep the original host and query string, redirect to https
                 host = request.headers.get("host", "")
                 url = request.url.replace(scheme="https", netloc=host)
                 from starlette.responses import RedirectResponse

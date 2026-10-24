@@ -1,25 +1,26 @@
 """
-数据校验工具
+Data validation utilities
 
-身份证号校验：18 位号码的最后一位是校验位，按 GB 11643-1999 的
-ISO 7064:1983 MOD 11-2 算法计算。校验位错误说明号码录入有误，
-在生产环境（真实客户数据）必须拦截，否则后续报送机构会因信息错误被退回。
+ID number validation: the last digit of an 18-digit number is a check digit computed
+with the ISO 7064:1983 MOD 11-2 algorithm from GB 11643-1999. A wrong check digit
+means the number was entered incorrectly and must be rejected in production (real
+customer data), otherwise the agency will return the submission over wrong information.
 """
 from datetime import datetime
 
-# 加权因子与校验码映射（GB 11643-1999）
+# Weighting factors and check-code mapping (GB 11643-1999)
 _WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
 _CHECK_CODES = ["1", "0", "X", "9", "8", "7", "6", "5", "4", "3", "2"]
 
 
 def validate_id_number(id_number: str) -> str | None:
     """
-    校验 18 位身份证号，合法返回 None，非法返回错误说明。
+    Validate an 18-digit ID number; returns None if valid, an error message if not.
 
-    规则：
-    - 18 位：校验位必须正确，出生日期必须合法
-    - 15 位（老式）：仅校验纯数字与出生日期
-    - 允许末位 x/X（会统一为大写）
+    Rules:
+    - 18 digits: check digit must be correct, birth date must be valid
+    - 15 digits (legacy): only digits-only and birth date are checked
+    - A trailing x/X is allowed (normalized to uppercase)
     """
     if not id_number:
         return "身份证号不能为空"
@@ -57,17 +58,17 @@ def _valid_birthdate(raw: str, fmt: str) -> bool:
         birth = datetime.strptime(raw, fmt)
     except ValueError:
         return False
-    # 出生日期不能是未来，也不能早于 1900 年
+    # Birth date must not be in the future, nor earlier than 1900
     return 1900 <= birth.year <= datetime.now().year
 
 
 def normalize_id_number(id_number: str) -> str:
-    """统一格式：去空白、末位 X 大写"""
+    """Normalize format: strip whitespace, uppercase a trailing X"""
     return (id_number or "").strip().upper()
 
 
 def validate_phone(phone: str | None) -> str | None:
-    """校验手机号（可为空），非法返回错误说明"""
+    """Validate a phone number (may be empty); returns an error message if invalid"""
     if not phone:
         return None
     value = phone.strip().replace(" ", "").replace("-", "")
@@ -76,8 +77,8 @@ def validate_phone(phone: str | None) -> str | None:
     return None
 
 
-# ---------- 密码强度 ----------
-# 常见弱口令（含项目种子账号的默认密码）——生产环境必须拒绝
+# ---------- Password strength ----------
+# Common weak passwords (including the seed accounts' defaults) — must be rejected in production
 WEAK_PASSWORDS = {
     "admin123", "sales123", "review123", "password", "123456", "12345678",
     "qwerty", "abc123", "111111", "000000", "admin", "root", "test123",
@@ -86,13 +87,13 @@ WEAK_PASSWORDS = {
 
 
 def check_password_strength(password: str, min_length: int = 8) -> str | None:
-    """检查密码强度，合格返回 None，否则返回中文原因。
+    """Check password strength; returns None if acceptable, a Chinese reason otherwise.
 
-    规则（面向内部管理系统的合理强度）：
-    - 长度 >= min_length（默认 8）
-    - 不能是常见弱口令
-    - 不能是纯数字或纯字母
-    - 不能与用户名相同或包含用户名
+    Rules (reasonable strength for an internal management system):
+    - Length >= min_length (default 8)
+    - Must not be a common weak password
+    - Must not be digits-only or letters-only
+    - Must not equal the username or contain it
     """
     if not password:
         return "密码不能为空"
@@ -107,6 +108,3 @@ def check_password_strength(password: str, min_length: int = 8) -> str | None:
     return None
 
 
-def is_weak_password(password: str) -> bool:
-    """是否为已知弱口令（用于识别需要强制改密的账号）"""
-    return bool(password) and password.lower() in WEAK_PASSWORDS

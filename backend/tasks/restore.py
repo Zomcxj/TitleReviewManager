@@ -1,38 +1,45 @@
 #!/usr/bin/env python3
 """
-数据恢复（数据库 + 材料文件）
+Data restore (database + material files)
 
-背景：备份模块此前只写不读 —— 恢复步骤仅存在于注释中，从未被任何代码执行过。
-「从没演练过恢复的备份等于没有备份」：格式变化、路径写错、manifest 与实际文件
-不一致等问题，都要等到真出事时才会暴露。
+Background: the backup module used to be write-only — the restore steps existed
+only in comments and were never executed by any code. "A backup whose restore has
+never been drilled equals no backup": format changes, wrong paths, manifest/files
+mismatches and the like only surface when disaster actually strikes.
 
-本模块把恢复变成可执行、可校验的代码：
+This module turns restore into executable, verifiable code:
 
-1. verify_backup()  —— 校验一份备份是否可用（文件存在、可解压、库可打开、
-                      表数量与 manifest 记录一致）。不碰任何生产数据。
-2. restore_database() —— 从备份恢复数据库。**默认拒绝覆盖现有库**，
-                      必须显式指定 --force 且自动先备份当前库。
-3. restore_files()  —— 从 tar.gz 恢复材料文件，默认恢复到临时目录供人工核对。
-4. drill()          —— 演练：把备份恢复到一个临时位置并校验数据可读，
-                      全过程不接触生产库。用于定期验证「备份真的能恢复」。
+1. verify_backup()     — check whether a backup is usable (files exist, archives
+                         extract, the database opens, table counts match the manifest).
+                         Touches no production data.
+2. restore_database()  — restore the database from a backup. **Refuses to overwrite
+                         an existing database by default**; requires an explicit --force
+                         and automatically backs up the current database first.
+3. restore_files()     — restore material files from the tar.gz, defaulting to a temp
+                         directory for manual inspection.
+4. drill()             — drill: restore a backup to a temporary location and verify the
+                         data is readable, never touching the production database.
+                         For periodically proving "the backup really restores".
 
-安全设计（恢复是破坏性操作，宁可多一道确认）
-- 恢复数据库默认拒绝写入已存在的库文件；--force 时先把现有库另存为 .pre_restore。
-- 恢复前校验归档完整性，损坏的备份直接拒绝，不会写出半个库。
-- 路径穿越防护：tar 成员路径做归一化检查，拒绝 ../ 逃逸。
-- 恢复后自动做一次数据自检（关键表行数、外键完整性）。
+Safety design (restore is destructive; prefer one extra confirmation)
+- Restoring the database refuses to write to an existing database file by default;
+  with --force the current database is first saved as .pre_restore.
+- Archive integrity is verified before restoring; a corrupt backup is rejected outright,
+  never leaving half a database behind.
+- Path traversal protection: tar member paths are normalized and checked; ../ escapes are refused.
+- After restoring, a data self-check runs automatically (critical table row counts, foreign key integrity).
 
-用法
-    # 演练（安全，推荐定期执行）
+Usage
+    # Drill (safe; run regularly)
     python tasks/restore.py --drill
 
-    # 校验某份备份
+    # Verify a specific backup
     python tasks/restore.py --verify 20260920_030000
 
-    # 真正恢复数据库（破坏性，需 --force）
+    # Actually restore the database (destructive, needs --force)
     python tasks/restore.py --restore-db 20260920_030000 --force
 
-    # 恢复材料文件到临时目录核对
+    # Restore material files to a temp directory for inspection
     python tasks/restore.py --restore-files 20260920_030000
 """
 import argparse
@@ -53,19 +60,21 @@ BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-# 恢复后必须存在且非空的业务关键表
+# Business-critical tables that must exist and be non-empty after a restore
 CRITICAL_TABLES = ("users", "customers", "applications", "materials")
 
-# 合法标识符：SQLite 表名只能由字母数字下划线组成
-# 用 \Z 而非 $：$ 在 Python 里也匹配「结尾换行之前」，会让 "users\n" 通过校验
+# Valid identifiers: SQLite table names may only contain alphanumerics and underscores
+# \Z instead of $: in Python $ also matches "before a trailing newline", letting "users\n" pass
 _IDENTIFIER_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 def _safe_ident(name: str) -> str:
-    """校验并返回可用于 SQL 的表名。
+    """Validate and return a table name safe for SQL.
 
-    这里的表名全部来自模块常量，本身没有注入风险；但把「安全」写成断言而非
-    约定，日后若有人把表名改成来自配置或用户输入，这里会直接拦下而不是静默放行。
+    All table names here come from module constants and carry no injection risk by
+    themselves; but making "safe" an assertion rather than a convention means that if
+    someone later changes the names to come from config or user input, this blocks
+    it outright instead of silently passing.
     """
     if not _IDENTIFIER_RE.match(name):
         raise RestoreError(f"非法表名，拒绝拼入 SQL: {name!r}")
@@ -73,22 +82,22 @@ def _safe_ident(name: str) -> str:
 
 
 class RestoreError(Exception):
-    """恢复过程中的可预期错误（不完整备份、格式不支持等）"""
+    """Expected errors during restore (incomplete backup, unsupported format, etc.)"""
 
 
-# ------------------------------------------------------------------ 定位备份
+# ------------------------------------------------------------------ locate backup
 def _backup_dir() -> str:
     from tasks.backup import get_backup_dir
     return get_backup_dir()
 
 
 def find_backup(timestamp: str = None) -> dict:
-    """定位一份备份，返回其文件路径集合。
+    """Locate a backup and return its set of file paths.
 
-    timestamp 为空时取最新一份（按 manifest 时间倒序）。
+    With timestamp empty, takes the latest one (manifests sorted by time, descending).
 
-    返回 {"timestamp", "manifest", "db", "files", "manifest_data"}
-    找不到时抛 RestoreError。
+    Returns {"timestamp", "manifest", "db", "files", "manifest_data"}.
+    Raises RestoreError when not found.
     """
     from tasks.backup import list_backups
 
@@ -130,9 +139,9 @@ def find_backup(timestamp: str = None) -> dict:
     return result
 
 
-# ------------------------------------------------------------------ 校验
+# ------------------------------------------------------------------ verification
 def _verify_gzip(path: str) -> None:
-    """校验 gzip 文件可完整解压（读到 EOF 才算通过）"""
+    """Verify a gzip file extracts completely (only passing when EOF is reached)"""
     try:
         with gzip.open(path, "rb") as f:
             while f.read(1024 * 1024):
@@ -142,7 +151,7 @@ def _verify_gzip(path: str) -> None:
 
 
 def _verify_sqlite(path: str) -> dict:
-    """校验 SQLite 备份可打开且结构完整，返回 {"tables": [...], "integrity": str}"""
+    """Verify a SQLite backup opens with intact structure; returns {"tables": [...], "integrity": str}"""
     try:
         con = sqlite3.connect(path)
     except Exception as e:
@@ -169,12 +178,12 @@ def _verify_sqlite(path: str) -> dict:
 
 
 def _verify_tar(path: str) -> dict:
-    """校验 tar.gz 可读，返回 {"members": n}。同时检查路径穿越。"""
+    """Verify a tar.gz is readable; returns {"members": n}. Also checks path traversal."""
     count = 0
     try:
         with tarfile.open(path, "r:gz") as tar:
             for member in tar:
-                # 路径穿越防护：恢复时若直接解包，恶意/损坏的归档可能写出目录外
+                # Path traversal protection: if extracted directly on restore, a malicious/corrupt archive could write outside the directory
                 name = member.name.replace("\\", "/")
                 normalized = os.path.normpath(name)
                 if normalized.startswith("..") or os.path.isabs(normalized):
@@ -189,10 +198,11 @@ def _verify_tar(path: str) -> dict:
 
 
 def verify_backup(timestamp: str = None, deep: bool = True) -> dict:
-    """校验一份备份是否可用于恢复。
+    """Verify whether a backup is usable for restore.
 
-    deep=True 时完整解压校验（较慢但可靠）；False 时只检查文件存在与大小。
-    返回校验报告 dict；失败抛 RestoreError。
+    With deep=True a full extraction check runs (slower but reliable); False only
+    checks file existence and sizes. Returns the verification report dict; raises
+    RestoreError on failure.
     """
     info = find_backup(timestamp)
     ts = info["timestamp"]
@@ -207,7 +217,7 @@ def verify_backup(timestamp: str = None, deep: bool = True) -> dict:
         raise RestoreError(f"数据库备份文件为空: {db_path}")
     report["checks"].append(f"数据库备份文件存在（{db_size} 字节）")
 
-    # 解压到临时目录后校验内容
+    # Extract to a temp directory, then verify the content
     with tempfile.TemporaryDirectory(prefix="trm_verify_") as tmp:
         if db_path.endswith(".gz"):
             if deep:
@@ -231,7 +241,7 @@ def verify_backup(timestamp: str = None, deep: bool = True) -> dict:
                 raise RestoreError(f"备份缺少关键业务表: {missing}")
             report["checks"].append(f"关键业务表齐全: {', '.join(CRITICAL_TABLES)}")
 
-            # 与 manifest 记录的表数量对比（manifest 不记录表数时跳过）
+            # Compare against the table count recorded in the manifest (skipped when the manifest has none)
             manifest_tables = (info["manifest_data"] or {}).get("tables_count")
             if manifest_tables and manifest_tables != len(sqlite_info["tables"]):
                 report["warnings"].append(
@@ -239,7 +249,7 @@ def verify_backup(timestamp: str = None, deep: bool = True) -> dict:
                     f"实际={len(sqlite_info['tables'])}"
                 )
         else:
-            # PostgreSQL 的 .sql 文本备份：只做基本可读性检查
+            # PostgreSQL's .sql text backup: only a basic readability check
             report["warnings"].append("非 SQLite 备份，跳过结构校验（请用 psql 验证）")
 
     files_path = info["files"]
@@ -261,16 +271,17 @@ def verify_backup(timestamp: str = None, deep: bool = True) -> dict:
     return report
 
 
-# ------------------------------------------------------------------ 恢复数据库
+# ------------------------------------------------------------------ restore database
 def restore_database(timestamp: str = None, force: bool = False,
                      target: str = None) -> dict:
-    """从备份恢复数据库。
+    """Restore the database from a backup.
 
-    默认拒绝覆盖已存在的库文件（恢复是破坏性操作）。
-    force=True 时先把现有库另存为 <库文件>.pre_restore_<时间戳>，再写入。
+    Refuses to overwrite an existing database file by default (restore is destructive).
+    With force=True the current database is first saved as <db file>.pre_restore_<timestamp>
+    before writing.
 
-    target 指定恢复到的库文件路径；为空时用当前 DATABASE_URL 指向的库。
-    返回恢复报告 dict。
+    target specifies the database file to restore into; when empty, the database pointed
+    to by the current DATABASE_URL is used. Returns the restore report dict.
     """
     info = find_backup(timestamp)
     ts = info["timestamp"]
@@ -289,7 +300,7 @@ def restore_database(timestamp: str = None, force: bool = False,
 
     report = {"timestamp": ts, "target": dest, "ok": False, "steps": []}
 
-    # 恢复前先校验备份可用，避免写出半个库
+    # Verify the backup is usable before restoring, so half a database is never written
     verification = verify_backup(ts)
     report["verification"] = verification
     report["steps"].append("备份校验通过")
@@ -306,7 +317,7 @@ def restore_database(timestamp: str = None, force: bool = False,
         report["steps"].append(f"现有库已另存为 {os.path.basename(safety)}")
         report["safety_copy"] = safety
 
-    # 解压/复制到目标位置
+    # Extract/copy to the target location
     if db_path.endswith(".gz"):
         with gzip.open(db_path, "rb") as fin, open(dest, "wb") as fout:
             shutil.copyfileobj(fin, fout)
@@ -315,7 +326,7 @@ def restore_database(timestamp: str = None, force: bool = False,
         shutil.copy2(db_path, dest)
         report["steps"].append("已复制备份文件到目标库")
 
-    # 恢复后自检：结构 + 关键表行数
+    # Post-restore self-check: structure + critical table row counts
     sqlite_info = _verify_sqlite(dest)
     report["tables_count"] = len(sqlite_info["tables"])
     report["steps"].append(f"恢复后完整性检查通过，共 {len(sqlite_info['tables'])} 张表")
@@ -334,15 +345,15 @@ def restore_database(timestamp: str = None, force: bool = False,
 
 
 def _row_counts(db_path: str) -> dict:
-    """统计关键表行数（恢复后核对数据是否真的回来了）"""
+    """Count rows in the critical tables (checking the data really came back after restore)"""
     counts = {}
     con = sqlite3.connect(db_path)
     try:
         for table in CRITICAL_TABLES:
             safe = _safe_ident(table)
             try:
-                # 表名无法参数化（SQL 占位符只能绑值，不能绑标识符），
-                # 因此改用白名单校验：safe 已经过 _safe_ident 正则确认。
+                # Table names cannot be parameterized (SQL placeholders bind values, not identifiers),
+                # so whitelist validation is used instead: safe has been confirmed by the _safe_ident regex.
                 counts[safe] = con.execute(
                     f'SELECT COUNT(*) FROM "{safe}"'  # nosec B608
                 ).fetchone()[0]
@@ -354,11 +365,11 @@ def _row_counts(db_path: str) -> dict:
 
 
 def _foreign_key_check(db_path: str) -> list:
-    """外键完整性检查，返回违规记录（最多 20 条）"""
+    """Foreign key integrity check; returns violations (at most 20)"""
     issues = []
     con = sqlite3.connect(db_path)
     try:
-        # PRAGMA foreign_key_check 在未启用外键的连接上也可运行
+        # PRAGMA foreign_key_check also runs on connections with foreign keys disabled
         for row in con.execute("PRAGMA foreign_key_check"):
             issues.append({"table": row[0], "rowid": row[1], "parent": row[2]})
             if len(issues) >= 20:
@@ -370,26 +381,28 @@ def _foreign_key_check(db_path: str) -> list:
     return issues
 
 
-# ------------------------------------------------------------------ 恢复材料文件
+# ------------------------------------------------------------------ restore material files
 def _extract_member(tar: tarfile.TarFile, member: tarfile.TarInfo, dest: str) -> None:
-    """解包单个成员。
+    """Extract a single member.
 
-    Python 3.12 起 tarfile.extract 未指定 filter 会告警，3.14 将改变默认行为；
-    本项目需兼容 3.10，因此按版本选择：能用 filter 就用 filter="data"
-    （它本身就带路径穿越防护），否则回落到已手工校验过路径的默认行为。
+    From Python 3.12, tarfile.extract warns when no filter is given, and 3.14 will
+    change the default; this project must support 3.10, so choose by version: use
+    filter="data" when available (it has path traversal protection built in), else
+    fall back to the default behavior with paths already validated manually.
     """
     try:
         tar.extract(member, path=dest, filter="data")
     except TypeError:
-        # Python < 3.12 不支持 filter 参数；路径已由调用方归一化校验
+        # Python < 3.12 has no filter parameter; paths were normalized/validated by the caller
         tar.extract(member, path=dest)
 
 
 def restore_files(timestamp: str = None, target: str = None) -> dict:
-    """恢复材料文件。
+    """Restore material files.
 
-    未指定 target 时解包到临时目录供人工核对（不直接覆盖生产材料目录，
-    因为材料文件是客户原始资料，误覆盖代价高）。
+    Without a target, extracts to a temp directory for manual inspection (never
+    directly overwrites the production material directory — materials are customers'
+    original documents, and accidental overwrite is costly).
     """
     info = find_backup(timestamp)
     ts = info["timestamp"]
@@ -403,7 +416,7 @@ def restore_files(timestamp: str = None, target: str = None) -> dict:
 
     report = {"timestamp": ts, "target": dest, "ok": False, "steps": []}
 
-    # 复用校验中的路径穿越检查
+    # Reuse the path traversal checks from verification
     tar_info = _verify_tar(files_path)
     report["steps"].append(f"归档校验通过，共 {tar_info['members']} 个文件")
 
@@ -425,18 +438,19 @@ def restore_files(timestamp: str = None, target: str = None) -> dict:
     return report
 
 
-# ------------------------------------------------------------------ 演练
+# ------------------------------------------------------------------ drill
 def drill(timestamp: str = None) -> dict:
-    """恢复演练：在临时位置完整走一遍恢复流程并校验数据可读。
+    """Restore drill: run the full restore flow in a temporary location and verify the data is readable.
 
-    全程不接触生产数据库与生产材料目录 —— 这是「备份是否真的可用」的
-    可重复验证手段。建议每月或每次修改备份逻辑后执行一次。
+    Never touches the production database or the production material directory —
+    this is the repeatable way to prove "the backup really works". Run it monthly,
+    or after any change to the backup logic.
     """
     info = find_backup(timestamp)
     ts = info["timestamp"]
     report = {"timestamp": ts, "ok": False, "steps": [], "warnings": []}
 
-    # 1) 校验
+    # 1) Verify
     verification = verify_backup(ts)
     report["verification"] = {
         "tables_count": verification.get("tables_count"),
@@ -446,14 +460,14 @@ def drill(timestamp: str = None) -> dict:
     report["steps"].append("备份校验通过")
 
     with tempfile.TemporaryDirectory(prefix="trm_drill_") as tmp:
-        # 2) 恢复数据库到临时文件
+        # 2) Restore the database to a temp file
         tmp_db = os.path.join(tmp, "restored.sqlite")
         db_report = restore_database(ts, force=True, target=tmp_db)
         report["steps"].append(f"数据库已恢复到临时位置，{db_report['tables_count']} 张表")
         report["row_counts"] = db_report.get("row_counts")
         report["warnings"].extend(db_report.get("warnings", []))
 
-        # 3) 数据可读性验证：真实查询关键业务对象
+        # 3) Data readability check: run real queries against key business objects
         readable = _readability_check(tmp_db)
         report["readability"] = readable
         if readable["ok"]:
@@ -464,7 +478,7 @@ def drill(timestamp: str = None) -> dict:
         else:
             report["warnings"].append(f"数据可读性检查异常: {readable.get('error')}")
 
-        # 4) 材料文件恢复到临时目录
+        # 4) Restore material files to a temp directory
         if info["files"]:
             files_report = restore_files(ts, target=os.path.join(tmp, "files"))
             report["steps"].append(f"材料文件已恢复到临时位置，{files_report['extracted']} 个文件")
@@ -474,17 +488,17 @@ def drill(timestamp: str = None) -> dict:
 
 
 def _readability_check(db_path: str) -> dict:
-    """用真实查询验证恢复出的库可用（不只是能打开，还要能查出业务数据）"""
+    """Use real queries to prove the restored database works (not just openable — business data must be queryable)"""
     result = {"ok": False, "users": 0, "customers": 0, "applications": 0}
     con = sqlite3.connect(db_path)
     try:
         for key, table in (("users", "users"), ("customers", "customers"),
                            ("applications", "applications")):
-            # 同 _row_counts：标识符不能参数化，用 _safe_ident 白名单校验
+            # Same as _row_counts: identifiers cannot be parameterized; whitelist-validate with _safe_ident
             result[key] = con.execute(
                 f'SELECT COUNT(*) FROM "{_safe_ident(table)}"'  # nosec B608
             ).fetchone()[0]
-        # 抽样一条客户记录，确认字段可正常读取
+        # Sample one customer record to confirm fields read correctly
         row = con.execute("SELECT id, name FROM customers LIMIT 1").fetchone()
         result["sample_customer"] = row[1] if row else None
         result["ok"] = True

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-SLA 时效管理定时任务
-- 每日检查超时客户
-- 自动释放 N 天未跟进的客户
-- 发送即将超时提醒
+SLA scheduled tasks
+- Daily check for overdue customers
+- Automatically release customers not followed up for N days
+- Send expiring-soon reminders
 """
 
 import logging
@@ -23,20 +23,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-POOL_RECOVERY_DAYS = 7  # 7 天未跟进自动回收
-SLA_HOURS_INITIAL = 24  # 初次分配 24 小时 SLA
-SLA_HOURS_REVIEW = 48   # 审核 48 小时 SLA
+POOL_RECOVERY_DAYS = 7  # auto-recycle after 7 days without follow-up
+SLA_HOURS_INITIAL = 24  # 24-hour SLA after initial assignment
+SLA_HOURS_REVIEW = 48   # 48-hour SLA for review
 
 
 def check_and_recovery_customers():
-    """检查并回收超时未跟进的客户"""
+    """Check and recycle customers overdue for follow-up"""
     db = next(get_db())
     try:
-        # 回收天数运行时读系统配置，模块级常量仅作兜底默认值
+        # Recovery days come from system config at runtime; the module-level constant is only a fallback default
         recovery_days = get_config(db, "pool_recovery_days") or POOL_RECOVERY_DAYS
         threshold = utcnow() - timedelta(days=recovery_days)
-        
-        # 用 coalesce 以创建时间兜底，避免新建客户（从未跟进）被立刻误回收
+
+        # Use coalesce with creation time as the fallback, so newly created customers (never followed up) are not immediately mis-recycled
         overdue_customers = db.query(Customer).filter(
             Customer.is_public == False,  # noqa: E712
             Customer.is_deleted == False,  # noqa: E712
@@ -75,7 +75,7 @@ def check_and_recovery_customers():
 
 
 def check_sla_deadlines():
-    """检查 SLA 截止时间"""
+    """Check SLA deadlines"""
     db = next(get_db())
     try:
         now = utcnow()
@@ -100,7 +100,7 @@ def check_sla_deadlines():
                     related_id=customer.id,
                 )
                 logger.warning(f"客户 {customer.name} SLA 已超时")
-            # 清除已超时的 SLA 截止时间，避免每次运行重复通知
+            # Clear the expired SLA deadline to avoid repeated notifications on every run
             customer.sla_deadline = None
         
         db.commit()
@@ -113,12 +113,12 @@ def check_sla_deadlines():
 
 
 def send_expiring_reminders():
-    """发送即将超时提醒（12 小时窗口内去重）"""
+    """Send expiring-soon reminders (deduplicated within a 12-hour window)"""
     db = next(get_db())
     try:
         now = utcnow()
         twelve_hours_later = now + timedelta(hours=12)
-        # 通知 created_at 以 aware UTC 写入，去重比较需使用 aware 时间
+        # Notification created_at is stored as aware UTC; dedup comparisons need aware datetimes
         dedup_since = datetime.now(timezone.utc) - timedelta(hours=12)
         
         expiring = db.query(Customer).filter(
@@ -131,7 +131,7 @@ def send_expiring_reminders():
         for customer in expiring:
             salesman_id = customer.assigned_salesman_id
             if salesman_id:
-                # 12 小时内已提醒过的客户跳过，避免重复轰炸
+                # Skip customers already reminded within 12 hours, avoiding repeated bombardment
                 reminded = db.query(Notification).filter(
                     Notification.type == "sla_warning",
                     Notification.related_type == "customer",

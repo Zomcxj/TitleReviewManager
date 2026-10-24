@@ -1,6 +1,6 @@
 <template>
   <div class="import-page">
-    <!-- Word 模板导入 -->
+    <!-- Word template import -->
     <el-card class="import-card">
       <template #header>
         <div class="card-header">
@@ -52,7 +52,7 @@
       </div>
     </el-card>
 
-    <!-- Excel 批量导入 -->
+    <!-- Excel batch import -->
     <el-card class="import-card">
       <template #header>
         <div class="card-header">
@@ -155,11 +155,11 @@ const excelFile = ref<File | null>(null)
 const wordLoading = ref(false)
 const loading = ref(false)
 const result = ref<any>(null)
-// 导出客户列表时是否脱敏身份证号与手机号（对外发送名单时建议开启）
+// Whether to mask ID numbers and phone numbers when exporting the customer list (recommended for external distribution)
 const maskExport = ref(false)
 const exporting = ref(false)
 
-// Word 模板相关
+// Word template related
 function downloadTemplate() {
   window.open('/api/word-import/template', '_blank')
 }
@@ -200,7 +200,7 @@ async function submitWord() {
   }
 }
 
-// Excel 相关
+// Excel related
 function downloadExcelTemplate() {
   window.open('/api/exports/template', '_blank')
 }
@@ -244,7 +244,7 @@ async function submitUpload() {
 async function doExport(type: string) {
   exporting.value = true
   try {
-    // 脱敏开关只对客户列表生效（该接口支持 mask 查询参数）
+    // The masking toggle only applies to the customer list (that endpoint supports the mask query parameter)
     const params = type === 'customers' && maskExport.value ? { mask: true } : undefined
     const response = await api.post(`/api/exports/${type}`, null, {
       responseType: 'blob',

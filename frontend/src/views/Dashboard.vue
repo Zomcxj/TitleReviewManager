@@ -63,7 +63,7 @@
       </div>
     </div>
 
-    <!-- 今日待办 -->
+    <!-- Today's to-dos -->
     <div class="card workbench-card" v-loading="workbenchLoading">
       <div class="card-header">
         <h3>今日待办</h3>
@@ -226,9 +226,9 @@
       </div>
     </div>
 
-    <!-- 转化漏斗 + 退回统计 -->
+    <!-- Conversion funnel + rejection statistics -->
     <div class="analytics-grid">
-      <!-- 转化漏斗 -->
+      <!-- Conversion funnel -->
       <div class="card funnel-card">
         <div class="card-header">
           <h3>转化漏斗</h3>
@@ -269,7 +269,7 @@
         </div>
       </div>
 
-      <!-- 退回原因统计 -->
+      <!-- Rejection reason statistics -->
       <div class="card rejection-card">
         <div class="card-header">
           <h3>材料退回统计</h3>
@@ -376,7 +376,7 @@ async function loadStats() {
   }
 }
 
-// ---------- 转化漏斗 ----------
+// ---------- Conversion funnel ----------
 interface FunnelStage {
   name: string
   count: number
@@ -409,7 +409,7 @@ async function loadFunnel() {
   }
 }
 
-// ---------- 退回统计 ----------
+// ---------- Rejection statistics ----------
 interface RejectionCategory {
   category: string
   total: number
@@ -819,7 +819,7 @@ onMounted(() => {
   }
 }
 
-/* ---------- 转化漏斗 + 退回统计 ---------- */
+/* ---------- Conversion funnel + rejection statistics ---------- */
 .analytics-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

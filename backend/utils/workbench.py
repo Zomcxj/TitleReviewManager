@@ -1,8 +1,10 @@
 """
-今日待办工作台
+Today to-do workbench
 
-把散落的跟进逾期、内部审核积压、申报截止、待收款，收敛成一个按角色过滤的
-待办接口。看板此前只有统计数字，业务员/审核员打开后不知道今天该先处理谁。
+Consolidates scattered items — overdue follow-ups, internal review backlog,
+application deadlines, pending payments — into a single role-filtered to-do API.
+The dashboard previously showed only counts; salesmen/reviewers had no idea whom
+to handle first today.
 """
 from datetime import datetime, timedelta
 
@@ -95,10 +97,11 @@ def list_pending_reviews(
     status: str | None = None,
     limit: int = 100,
 ) -> dict:
-    """内部待审核队列。
+    """Internal pending-review queue.
 
-    口径：批次处于「完成资料 / 资料补充 / 二次申报」，且存在待审核材料。
-    审核员/管理员看全部；业务员只看名下客户（便于对照退回补件进度）。
+    Criteria: applications in "materials complete / supplement / reapply" status
+    with materials still pending review. Reviewers/admins see all; salesmen see only
+    their own customers (to track return-for-revision progress).
     """
     now = utcnow()
     query = (
@@ -164,7 +167,7 @@ def list_upcoming_deadlines(
     days: int = 7,
     limit: int = 50,
 ) -> dict:
-    """申报截止：已逾期 + 未来 N 天内，排除终态。"""
+    """Application deadlines: overdue + within the next N days, terminal states excluded."""
     now = utcnow()
     until = now + timedelta(days=days)
     query = (
@@ -203,7 +206,7 @@ def list_upcoming_deadlines(
 
 
 def list_pending_payments_brief(db: Session, user: dict, limit: int = 20) -> dict:
-    """待收款摘要（工作台用，不含完整财务明细）。"""
+    """Pending payments summary (workbench only, no full finance details)."""
     role = (user or {}).get("role")
     if role not in ("admin", "salesman"):
         return {"items": [], "total": 0, "total_unpaid": 0.0}
@@ -251,7 +254,7 @@ def list_pending_payments_brief(db: Session, user: dict, limit: int = 20) -> dic
 
 
 def get_workbench(db: Session, user: dict) -> dict:
-    """按角色返回今日待办。"""
+    """Return today's to-dos by role."""
     role = (user or {}).get("role") or ""
     follow_ups = get_pending_follow_ups(db, user, "today")
     overdue_follow_ups = get_pending_follow_ups(db, user, "overdue")
@@ -289,7 +292,7 @@ def get_workbench(db: Session, user: dict) -> dict:
 
 
 def mark_review_sla_started(db: Session, app: Application) -> None:
-    """批次进入内部待审（完成资料）时写入审核 SLA。已有截止时间则不覆盖。"""
+    """Set the review SLA when an application enters internal pending review (materials complete). Never overwrites an existing deadline."""
     if not app or app.review_sla_deadline:
         return
     hours = get_config(db, "sla_hours_before_review") or 48

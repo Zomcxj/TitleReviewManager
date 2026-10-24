@@ -194,7 +194,7 @@
       <div v-else-if="previewType === 'pdf'" class="pdf-preview">
         <el-button type="primary" @click="openPdfTab">在新标签页中打开 PDF</el-button>
       </div>
-      <!-- docx 纯前端本地解析预览 -->
+      <!-- docx pure client-side local parsing preview -->
       <div
         v-else-if="previewType === 'docx'"
         class="docx-preview"
@@ -215,7 +215,7 @@
           <span>文档内容为空</span>
         </div>
       </div>
-      <!-- .doc 旧二进制格式 / 其他不支持的类型：无法本地解析 -->
+      <!-- .doc legacy binary format / other unsupported types: cannot be parsed locally -->
       <div v-else-if="previewType === 'doc'" class="docx-preview">
         <div class="docx-tip">
           <el-icon class="docx-tip-icon"><WarningFilled /></el-icon>
@@ -252,16 +252,16 @@ const previewMaterial = ref<any>(null)
 const docxHtml = ref('')
 const docxLoading = ref(false)
 const docxError = ref('')
-/** 不支持预览类型（.doc / 未知类型）的提示文案 */
+/** Tip text for unsupported preview types (.doc / unknown types) */
 const unsupportedTip = ref('')
-/** 递增请求序号，避免快速切换文件时旧请求的结果覆盖新内容 */
+/** Incrementing request sequence number so stale results from rapid file switching never overwrite newer content */
 let docxRequestSeq = 0
 const rejectDetailVisible = ref(false)
 const rejectDetailItem = ref<any>(null)
 const rejectDetailData = ref<any>({})
 const checklist = ref<any>(null)
 const showChecklist = ref(false)
-/** 批量打包下载中（打包可能耗时） */
+/** Batch zip download in progress (zipping may take a while) */
 const batchDownloading = ref(false)
 
 const batchDownloadLabel = computed(() =>
@@ -277,7 +277,7 @@ const PDF_EXTS = ['.pdf']
 const DOCX_EXTS = ['.docx']
 const DOC_EXTS = ['.doc']
 
-/** .doc 为旧版 Word 二进制格式，mammoth 无法解析，只提供下载 */
+/** .doc is a legacy Word binary format that mammoth cannot parse; download only */
 const DOC_UNSUPPORTED_TIP = '.doc 为旧版 Word 二进制格式，暂不支持在线预览，请下载查看'
 const UNSUPPORTED_TIP = '该文件类型不支持在线预览，请下载查看'
 
@@ -336,11 +336,11 @@ async function loadMaterials() {
   try {
     const { data } = await api.get(`/api/applications/${props.applicationId}/materials/`)
     materials.value = data.items || []
-    // 转换后端树格式为 el-tree 格式
+    // Convert backend tree format to el-tree format
     const rawTree = data.tree || []
     if (rawTree.length && rawTree[0].category !== undefined) {
-      // 后端格式: [{category, files: [{name, path, size, modified}]}]
-      // 转换为: [{name, path, children: [{name, path, isLeaf}]}]
+      // Backend format: [{category, files: [{name, path, size, modified}]}]
+      // Converted to: [{name, path, children: [{name, path, isLeaf}]}]
       fileTree.value = rawTree.map((cat: any) => ({
         name: cat.category,
         path: cat.category,
@@ -355,7 +355,7 @@ async function loadMaterials() {
     }
     const { data: reviewData } = await api.get(`/api/reviews/application/${props.applicationId}`)
     reviews.value = reviewData
-    // 材料清单完备性：上传/删除材料后随材料列表一并刷新
+    // Material checklist completeness: refreshed along with the material list after upload/delete
     loadChecklist()
   } finally {
     loading.value = false
@@ -404,7 +404,7 @@ async function downloadFile(materialId: number) {
   window.open(`/api/applications/${props.applicationId}/materials/file/${materialId}`, '_blank')
 }
 
-/** 从 Content-Disposition 解析文件名（优先 RFC 5987 的 filename*=UTF-8''） */
+/** Parse the filename from Content-Disposition (prefer the RFC 5987 filename*=UTF-8'' form) */
 function parseFilename(disposition: string | undefined): string {
   if (!disposition) return ''
   const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
@@ -419,7 +419,7 @@ function parseFilename(disposition: string | undefined): string {
   return match ? match[1] : ''
 }
 
-/** 批量下载：按当前选中的类别过滤，未选择则打包全部类别 */
+/** Batch download: filter by the currently selected category; pack all categories when none selected */
 async function batchDownload() {
   if (batchDownloading.value) return
   batchDownloading.value = true
@@ -442,7 +442,7 @@ async function batchDownload() {
     window.URL.revokeObjectURL(url)
     ElMessage.success('打包下载已开始')
   } catch (e: any) {
-    // blob 响应下错误体也是 blob，需要异步解析出 detail
+    // With a blob response the error body is also a blob; parse the detail out asynchronously
     let detail = ''
     const blob = e.response?.data
     if (blob instanceof Blob) {
@@ -473,7 +473,7 @@ async function deleteMaterial(materialId: number, version: number) {
     ElMessage.success('已删除')
     loadMaterials()
   } catch {
-    // 用户点「取消」走这里，属正常流程；接口失败已由 api 拦截器统一提示
+    // Reaching here means the user clicked "Cancel", a normal flow; API failures are already reported by the api interceptor
   }
 }
 
@@ -494,7 +494,7 @@ async function loadDocxPreview(item: any) {
   docxError.value = ''
   docxHtml.value = ''
   try {
-    // 同源 + Cookie 鉴权本地取回，交给 mammoth 在浏览器内解析，不上传任何第三方
+    // Fetched same-origin with Cookie auth and parsed in-browser by mammoth; never sent to any third party
     const buffer = await fetchMaterialBuffer(materialFileUrl(item.id))
     const html = await docxToHtml(buffer)
     if (seq !== docxRequestSeq) return
@@ -509,7 +509,7 @@ async function loadDocxPreview(item: any) {
 }
 
 function previewFile(item: any) {
-  // 切换文件时清理上一次的 docx 解析状态与在途请求
+  // Reset the previous docx parsing state and in-flight requests when switching files
   resetDocxPreview()
   const ext = getFileExt(item.filename)
   if (IMAGE_EXTS.includes(ext)) {
@@ -532,7 +532,7 @@ function previewFile(item: any) {
     previewMaterial.value = item
     previewVisible.value = true
   } else {
-    // 其他未知类型（含无扩展名）：同样给出下载引导
+    // Other unknown types (including no extension): also guide the user to download
     previewType.value = 'doc'
     unsupportedTip.value = UNSUPPORTED_TIP
     previewMaterial.value = item
@@ -838,7 +838,7 @@ watch(() => props.applicationId, loadMaterials, { immediate: true })
   padding: 40px;
 }
 
-/* ---------- docx 本地解析预览 ---------- */
+/* ---------- docx local parsing preview ---------- */
 .docx-preview {
   width: 100%;
   height: 85vh;

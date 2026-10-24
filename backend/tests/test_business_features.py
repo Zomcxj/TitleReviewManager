@@ -1,6 +1,6 @@
-"""业务功能测试：跟进日程、退回统计、转化漏斗、批量下载
+"""Business feature tests: follow-up schedule, rejection stats, conversion funnel, batch download
 
-这四个是业务深化功能，验证数据口径与权限范围正确。
+Four business deepening features, verifying correct data semantics and permission scope.
 """
 import io
 import zipfile
@@ -28,7 +28,7 @@ def fixture_biz_salesman(db):
 
 @pytest.fixture(name="biz_data")
 def fixture_biz_data(db, biz_salesman):
-    """客户 + 批次 + 通过/退回材料 + 逾期跟进"""
+    """Customer + application + passed/returned materials + overdue follow-up"""
     c = models.Customer(name="业务客户", id_number=VALID_ID, phone="13800138001",
                         assigned_salesman_id=biz_salesman.id, name_pinyin="YWKH")
     db.add(c)
@@ -74,12 +74,12 @@ class TestFollowUpSchedule:
         assert item["customer_name"] == "业务客户"
 
     def test_today_scope_includes_overdue(self, client, db, biz_salesman, biz_data):
-        """今天的日程应包含已逾期的（都还没处理）"""
+        """Today's schedule should include overdue items (none have been handled yet)"""
         _login(client, "biz_s", "pass1234")
         assert client.get("/api/follow-ups/schedule?scope=today").json()["total"] == 1
 
     def test_week_scope_excludes_overdue(self, client, db, biz_salesman, biz_data):
-        """未来一周不含已过期的"""
+        """The coming week excludes items already past due"""
         _login(client, "biz_s", "pass1234")
         assert client.get("/api/follow-ups/schedule?scope=week").json()["total"] == 0
 
@@ -115,15 +115,15 @@ class TestRejectionStats:
         assert d["total_rejected"] == 1
         assert d["total_reviews"] == 2
         assert d["reject_rate"] == 50.0
-        # 按类别：业绩成果被退回
+        # By category: the achievements category was returned
         cat = {x["category"]: x for x in d["by_category"]}
         assert cat["业绩成果"]["rejected"] == 1
         assert cat["身份证明"]["rejected"] == 0
-        # 按问题类型
+        # By issue type
         assert any(x["issue_type"] == "材料缺失" for x in d["by_issue_type"])
-        # 按业务员
+        # By salesman
         assert any(x["salesman_id"] == biz_data[0].assigned_salesman_id for x in d["by_salesman"])
-        # 趋势 30 天
+        # 30-day trend
         assert len(d["trend"]) == 30
 
     def test_salesman_scoped(self, client, db, biz_salesman, biz_data):
@@ -149,10 +149,10 @@ class TestConversionFunnel:
         d = r.json()
         assert [s["name"] for s in d["stages"]] == ["建档", "材料准备", "提交机构", "评审通过"]
         assert d["total_customers"] >= 1
-        # 该客户已提交机构（submitted_at 非空）
+        # This customer was submitted to the institution (submitted_at is non-null)
         submitted = next(s for s in d["stages"] if s["name"] == "提交机构")
         assert submitted["count"] >= 1
-        # 未通过
+        # Not approved
         approved = next(s for s in d["stages"] if s["name"] == "评审通过")
         assert approved["count"] == 0
 
@@ -163,7 +163,7 @@ class TestConversionFunnel:
         assert "from_stage" in d["drop_off"] and "lost" in d["drop_off"]
 
     def test_funnel_empty_returns_four_stages(self, client, db, test_user):
-        """无客户时仍返回四阶段（前端渲染不需要特判）"""
+        """Still returns four stages with no customers (frontend rendering needs no special-casing)"""
         _login(client, "testuser", "testpassword")
         d = client.get("/api/dashboard/funnel?days=180").json()
         assert len(d["stages"]) == 4
@@ -177,7 +177,7 @@ class TestConversionFunnel:
 
 class TestBatchDownload:
     def test_zip_with_real_files(self, client, db, biz_salesman):
-        """用真实文件验证打包（材料写入 NAS 存储根）"""
+        """Verify packaging with real files (materials written to the NAS storage root)"""
         from storage import customer_dir, save_file
         c = models.Customer(name="Zip客户", id_number=VALID_ID, phone="13800138001",
                             assigned_salesman_id=biz_salesman.id, name_pinyin="ZIP")
@@ -203,7 +203,7 @@ class TestBatchDownload:
         names = zf.namelist()
         assert any("身份证明" in n for n in names)
         assert len([n for n in names if n.endswith(".pdf")]) == 2
-        # 内容可读
+        # Content is readable
         assert b"%PDF" in zf.read([n for n in names if n.endswith(".pdf")][0])
 
     def test_zip_category_filter(self, client, db, biz_salesman):

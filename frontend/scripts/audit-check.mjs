@@ -1,30 +1,32 @@
 #!/usr/bin/env node
 /**
- * npm audit 检查（带豁免清单）
+ * npm audit check (with an exemption list)
  *
- * 为什么不用 `npm audit --audit-level=high`：
- * 该命令不支持忽略清单，而 vite 5 存在三条**仅影响本地开发服务器**的漏洞
- * （路径穿越、Windows NTLM 泄露、fs.deny 绕过），修复需跨大版本升级到 vite 8，
- * 而本项目生产部署只使用 `vite build` 的静态产物（由 FastAPI 托管），
- * 开发服务器不对外暴露 —— 因此按例外处理，但**新增的 high/critical 仍会失败**。
+ * Why not just `npm audit --audit-level=high`:
+ * that command supports no ignore list, while vite 5 carries three vulnerabilities that
+ * **only affect the local dev server** (path traversal, Windows NTLM credential leak, fs.deny
+ * bypass). Fixing them requires a major-version upgrade to vite 8, yet this project's
+ * production deployment only serves the static output of `vite build` (hosted by FastAPI),
+ * with the dev server never exposed — hence this exception, but **any new high/critical still
+ * fails**.
  *
- * 豁免项需写明理由与影响面；升级 vite 后应删除对应条目。
+ * Every exemption must state its reason and impact scope; remove the entry once vite is upgraded.
  */
 import { execSync } from 'node:child_process'
 import { readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// 豁免的 GHSA 编号 → 理由
+// Exempted GHSA ids → reason
 const ALLOWED = {
   'GHSA-4w7w-66w2-5vf9': 'vite 开发服务器路径穿越（生产用静态产物，dev server 不对外）',
   'GHSA-v6wh-96g9-6wx3': 'vite launch-editor 在 Windows 下 NTLM 泄露（仅本地开发）',
   'GHSA-fx2h-pf6j-xcff': 'vite server.fs.deny 在 Windows 备用路径绕过（仅本地开发）',
 }
 
-// 审计走官方 registry：部分镜像（如 npmmirror）未实现 audit 接口，会返回空结果造成假通过
+// Run the audit against the official registry: some mirrors (e.g. npmmirror) do not implement the audit endpoint and return empty results, producing false passes
 const AUDIT_REGISTRY = process.env.NPM_AUDIT_REGISTRY || 'https://registry.npmjs.org'
-// 经临时文件读取：npm audit 的 JSON 在 Windows 下经管道可能被截断
+// Read through a temp file: npm audit's JSON can be truncated when piped on Windows
 const outFile = join(tmpdir(), `trm-audit-${process.pid}.json`)
 
 let raw
@@ -34,14 +36,14 @@ try {
     { stdio: ['ignore', 'pipe', 'pipe'], shell: true },
   )
 } catch {
-  // npm audit 有漏洞时退出码非 0，但输出文件仍含完整 JSON
+  // npm audit exits non-zero when vulnerabilities are found, but the output file still holds the complete JSON
 }
 try {
   raw = readFileSync(outFile, 'utf8')
 } catch {
   raw = ''
 } finally {
-  try { rmSync(outFile, { force: true }) } catch { /* 清理失败不影响结果 */ }
+  try { rmSync(outFile, { force: true }) } catch { /* cleanup failure does not affect the result */ }
 }
 
 if (!raw.trim()) {
@@ -64,7 +66,7 @@ const blocking = []
 for (const [name, info] of Object.entries(vulns)) {
   const severity = info.severity
   if (severity !== 'high' && severity !== 'critical') continue
-  // 收集该包关联的 advisory id（直接来源与经由依赖）
+  // Collect the advisory ids associated with this package (direct sources and via dependencies)
   const ids = new Set()
   if (Array.isArray(info.via)) {
     for (const via of info.via) {

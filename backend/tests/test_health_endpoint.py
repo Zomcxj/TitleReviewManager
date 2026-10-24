@@ -1,24 +1,29 @@
-"""健康检查端点的安全与可用性测试。
+"""Security and availability tests for the health check endpoints.
 
-背景：服务有外网可达地址（客户注册链接），因此健康端点的信息暴露面必须收敛：
-- /api/health 匿名可用（容器 HEALTHCHECK / 外部拨测依赖），但异常时只能给
-  通用信息 —— 把数据库异常原文返回公网等于泄露基础设施细节。
-- /api/health/detail 会暴露 JWT 密钥强度、存储路径、调度器状态等，
-  必须管理员登录后才能访问（此前匿名可访问，Guide 还教用户「无需登录」）。
+Background: the service has an internet-reachable address (customer
+registration links), so the health endpoints' information exposure must be
+tightened:
+- /api/health is anonymously accessible (container HEALTHCHECK / external
+  probes depend on it), but on error it may only give generic information —
+  returning raw database exceptions to the public internet equals leaking
+  infrastructure details.
+- /api/health/detail exposes JWT key strength, storage paths, scheduler
+  status, etc., and must require an admin login (previously anonymous access
+  worked, and the Guide even taught users "no login needed").
 """
 import pytest
 from fastapi.testclient import TestClient
 
 
 def test_basic_health_is_anonymous(client: TestClient):
-    """/api/health 必须匿名可用：Docker HEALTHCHECK 和外部拨测都没有登录态。"""
+    """/api/health must be anonymously accessible: Docker HEALTHCHECK and external probes carry no login state."""
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
 
 def test_basic_health_does_not_leak_db_error(client: TestClient, monkeypatch):
-    """数据库异常时返回通用信息，不能把异常原文（可能含主机/路径）给公网。"""
+    """On database errors return generic information; never hand the raw exception (may contain hosts/paths) to the public internet."""
     class BoomSession:
         def execute(self, *_a, **_k):
             raise RuntimeError("psycopg2: connect to 10.0.0.8:5432 failed: password invalid")
@@ -36,7 +41,7 @@ def test_basic_health_does_not_leak_db_error(client: TestClient, monkeypatch):
 
 
 def test_detail_requires_login(client: TestClient):
-    """匿名访问配置自检必须被拒：它暴露密钥强度/存储路径等基础设施信息。"""
+    """Anonymous access to the config self-check must be rejected: it exposes key strength/storage paths and other infrastructure details."""
     response = client.get("/api/health/detail")
     assert response.status_code == 401
 
@@ -52,7 +57,7 @@ def test_detail_rejects_non_admin(client: TestClient, test_salesman):
 
 
 def test_detail_allows_admin(client: TestClient, test_user):
-    """管理员登录后浏览器直接访问仍可用（cookie 鉴权，运维习惯不变）。"""
+    """After admin login, direct browser access still works (cookie auth, ops habits unchanged)."""
     client.post("/api/auth/login", json={"username": "testuser", "password": "testpassword"})
     response = client.get("/api/health/detail")
     assert response.status_code == 200

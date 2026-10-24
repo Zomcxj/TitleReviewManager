@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -15,16 +14,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 480
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Rate limiting: IP -> list of timestamps
-_login_attempts: dict[str, list[float]] = {}
-# Account lockout: username -> {count, locked_until}
-_account_locks: dict[str, dict] = {}
-
-MAX_ATTEMPTS_PER_WINDOW = 100
-RATE_WINDOW_SECONDS = 300  # 5 minutes
-LOCKOUT_THRESHOLD = 50
-LOCKOUT_DURATION_SECONDS = 900  # 15 minutes
-
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
@@ -32,53 +21,6 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
-
-
-def check_rate_limit(ip: str) -> None:
-    now = time.time()
-    if ip not in _login_attempts:
-        _login_attempts[ip] = []
-    # Remove attempts outside the window
-    _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < RATE_WINDOW_SECONDS]
-    if len(_login_attempts[ip]) >= MAX_ATTEMPTS_PER_WINDOW:
-        remaining = RATE_WINDOW_SECONDS - (now - _login_attempts[ip][0])
-        raise HTTPException(
-            status_code=429,
-            detail=f"登录尝试过于频繁，请在 {int(remaining)} 秒后重试",
-        )
-
-
-def record_attempt(ip: str) -> None:
-    now = time.time()
-    if ip not in _login_attempts:
-        _login_attempts[ip] = []
-    _login_attempts[ip].append(now)
-
-
-def check_account_lock(username: str) -> None:
-    if username in _account_locks:
-        lock = _account_locks[username]
-        if lock["locked_until"] > time.time():
-            remaining = int(lock["locked_until"] - time.time())
-            raise HTTPException(
-                status_code=429,
-                detail=f"账号已被锁定，请在 {remaining // 60} 分 {remaining % 60} 秒后重试",
-            )
-        else:
-            del _account_locks[username]
-
-
-def record_failed_login(username: str) -> None:
-    if username not in _account_locks:
-        _account_locks[username] = {"count": 0, "locked_until": 0}
-    _account_locks[username]["count"] += 1
-    if _account_locks[username]["count"] >= LOCKOUT_THRESHOLD:
-        _account_locks[username]["locked_until"] = time.time() + LOCKOUT_DURATION_SECONDS
-
-
-def reset_failed_login(username: str) -> None:
-    if username in _account_locks:
-        del _account_locks[username]
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
@@ -96,14 +38,17 @@ def decode_access_token(token: str) -> dict | None:
 
 
 async def get_current_user(request: Request) -> dict:
-    """解析并校验当前用户。
+    """Parse and validate the current user.
 
-    除签名与过期时间外，还回查数据库校验：
-    - 用户仍存在且未被软删除（此前删除用户后其 token 仍可用满 8 小时）
-    - token 中的版本号与用户当前 token_version 一致
-      （改密 / 管理员重置密码 / 删除用户后会自增，使旧 token 立即失效）
+    Beyond signature and expiry, it also re-checks the database to verify:
+    - the user still exists and is not soft-deleted (previously a deleted user's token
+      remained valid for the full 8 hours)
+    - the version number in the token matches the user's current token_version
+      (incremented on password change / admin password reset / user deletion, so old
+      tokens become invalid immediately)
 
-    代价是每个请求一次主键查询（有索引），对内部管理系统可接受。
+    The cost is one primary-key query (indexed) per request, acceptable for an
+    internal management system.
     """
     token = request.cookies.get("access_token")
     if not token:
@@ -116,9 +61,9 @@ async def get_current_user(request: Request) -> dict:
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    # 回查数据库确认账号有效性与 token 版本。
-    # 注意：本函数在路由内被直接 await 调用（非 Depends），因此这里取的是
-    # database.SessionLocal；测试通过 conftest 把该工厂指向内存库。
+    # Re-check the database to confirm account validity and token version.
+    # Note: this function is awaited directly inside routes (not via Depends), so it takes
+    # database.SessionLocal; tests point that factory at the in-memory DB via conftest.
     uid = payload.get("user_id") or payload.get("id")
     if not uid:
         raise HTTPException(status_code=401, detail="Invalid token payload")
@@ -131,19 +76,19 @@ async def get_current_user(request: Request) -> dict:
         if not user:
             raise HTTPException(status_code=401, detail="账号不存在或已被删除")
         token_version = payload.get("tv")
-        # 兼容旧 token（无 tv 字段）：视为版本 0
+        # Backward compatibility with old tokens (no tv field): treat as version 0
         if (token_version or 0) != (user.token_version or 0):
             raise HTTPException(status_code=401, detail="登录状态已失效，请重新登录")
-        # 校验会话未被撤销/过期（支持按设备下线；旧 token 无 sid 时跳过）
+        # Verify the session is not revoked/expired (supports per-device sign-out; skipped for old tokens without sid)
         from utils.session_manager import is_session_valid, touch_session
         sid = payload.get("sid")
         if not is_session_valid(db, sid, user.id):
             raise HTTPException(status_code=401, detail="该设备已被下线，请重新登录")
         touch_session(db, sid)
-        # 以数据库为准回填角色，避免 token 中的旧角色被继续使用
+        # Backfill the role from the database so a stale role in the token is not kept in use
         payload["role"] = user.role
         payload["username"] = user.username
-        # 显式带上会话标识，供 /auth/sessions 标记"当前设备"
+        # Explicitly carry the session id so /auth/sessions can mark the "current device"
         payload["sid"] = sid
     finally:
         db.close()
@@ -151,20 +96,9 @@ async def get_current_user(request: Request) -> dict:
     return payload
 
 
-def bump_token_version(db, user_id: int) -> None:
-    """自增用户 token 版本，使其所有已签发的 token 立即失效。
-
-    调用时机：用户改密、管理员重置密码、删除用户、强制下线。
-    """
-    from models import User
-    user = db.query(User).filter(User.id == user_id).first()
-    if user:
-        user.token_version = (user.token_version or 0) + 1
-
-
 def require_role(*required_roles):
-    """依赖项工厂：校验 JWT 并回查数据库，确保用户仍存在且角色为最新值。
-    支持可变参数 require_role("admin", "salesman") 或传列表 require_role(["admin", "salesman"])。"""
+    """Dependency factory: validates the JWT and re-checks the database, ensuring the user still
+    exists with the latest role. Accepts varargs require_role("admin", "salesman") or a list require_role(["admin", "salesman"])."""
     from fastapi import Depends
     from sqlalchemy.orm import Session
 

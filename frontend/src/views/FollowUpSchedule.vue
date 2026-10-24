@@ -1,6 +1,6 @@
 <template>
   <div class="follow-up-page">
-    <!-- 统计卡 -->
+    <!-- Stat cards -->
     <div class="stats-grid">
       <div class="stat-card overdue" :class="{ active: scope === 'overdue' }" @click="switchScope('overdue')">
         <div class="stat-header">
@@ -36,7 +36,7 @@
       </div>
     </div>
 
-    <!-- 列表 -->
+    <!-- List -->
     <div class="card">
       <div class="card-header">
         <h3>待跟进日程</h3>
@@ -168,7 +168,7 @@ function typeTag(type: string): 'primary' | 'success' | 'warning' | 'info' | 'da
   return map[type] || 'info'
 }
 
-/** 截断长文本 */
+/** Truncate long text */
 function truncate(text: string, len: number): string {
   if (!text) return ''
   return text.length > len ? `${text.slice(0, len)}…` : text
@@ -178,7 +178,7 @@ function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n)
 }
 
-/** 时间格式化（不引 dayjs），后端返回 naive UTC，按 UTC 解析后转本地展示 */
+/** Time formatting (no dayjs); the backend returns naive UTC, parse it as UTC and convert to local time for display */
 function formatTime(time: string | null): string {
   if (!time) return '-'
   const iso = /(Z|[+-]\d{2}:?\d{2})$/.test(time) ? time : `${time}Z`

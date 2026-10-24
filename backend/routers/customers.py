@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/customers", tags=["客户管理"])
 
 
 def _require_roles(*roles: str):
-    """兼容 require_role 的签名差异（*args / List）与 async 工厂写法"""
+    """Handle require_role signature differences (*args / List) and async factory variants"""
     try:
         dep = require_role(*roles)
     except TypeError:
@@ -40,10 +40,11 @@ def _require_roles(*roles: str):
 
 
 def _duplicate_phone_error(db: Session, phone: str, exclude_customer_id: int = None):
-    """手机号查重。
+    """Duplicate phone check.
 
-    是否拦截由系统配置 reject_duplicate_phone 决定：默认为 0（不拦截），
-    因为一个手机号可能是家属共用。仅当配置为真时才返回错误提示文案。
+    Whether to block is decided by the system config reject_duplicate_phone:
+    0 by default (no blocking), since a phone number may be shared by family
+    members. The error message is returned only when the config is enabled.
     """
     if not phone:
         return None
@@ -63,7 +64,7 @@ def _duplicate_phone_error(db: Session, phone: str, exclude_customer_id: int = N
 
 
 def _sync_customer_directory(db: Session, customer: Customer, old_name: str, old_pinyin: str, old_salesman_username: str = ""):
-    """客户改名/换业务员后同步 NAS 目录：重命名目录并修正该客户材料的 file_path 前缀。"""
+    """Sync the NAS directory after a customer rename/salesman change: rename the directory and fix the file_path prefix of the customer's materials."""
     year = customer.created_at.year if customer.created_at else utcnow().year
     old_rel = customer_dir(
         year=year,
@@ -119,8 +120,9 @@ async def list_customers(
     
     base_query = (
         db.query(Customer, Application)
-        # 用 outer join：客户从回收站恢复后，名下批次可能仍在回收站，
-        # 此时客户本身应回到列表（状态显示为未知），而不是因 inner join 被隐藏
+        # Use outer join: after a customer is restored from the recycle bin, its batches
+        # may still be in the recycle bin; the customer itself should return to the list
+        # (status shown as unknown) instead of being hidden by an inner join
         .outerjoin(latest_app_subq, Customer.id == latest_app_subq.c.customer_id)
         .outerjoin(Application, Application.id == latest_app_subq.c.max_id)
         .filter(Customer.is_deleted == False)  # noqa: E712
@@ -147,12 +149,12 @@ async def list_customers(
     
     results = []
     for customer, app in items:
-        # 统计该申请的材料数量
+        # Count materials for this application
         materials_count = 0
         if app:
             materials_count = db.query(func.count(Material.id)).filter(Material.application_id == app.id).scalar() or 0
         item = CustomerResponse.model_validate(customer).model_dump()
-        # 字段级权限：业务员看他人客户 / 审核员 → 证件号与手机号脱敏
+        # Field-level permissions: salesmen viewing others' customers / reviewers → mask ID number and phone
         from utils.masking import apply_customer_masking
         apply_customer_masking(item, user, customer)
         results.append({
@@ -169,7 +171,7 @@ async def list_customers(
 async def get_stats(request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
     
-    # 统一 join Customer 并排除软删除客户，避免软删除客户名下批次仍被统计
+    # Join Customer and exclude soft-deleted customers so batches under soft-deleted customers are not counted
     base_query = (
         db.query(Application)
         .join(Customer, Customer.id == Application.customer_id)
@@ -201,7 +203,7 @@ async def get_stats(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/salesmen")
 async def list_salesmen(request: Request, db: Session = Depends(get_db)):
-    """获取所有业务员列表（转让选择、客户列表业务员列展示）"""
+    """List all salesmen (for transfer selection and the salesman column in the customer list)"""
     user = await get_current_user(request)
     if user.get("role") not in ("admin", "salesman", "reviewer"):
         raise HTTPException(status_code=403, detail="无权访问")
@@ -256,7 +258,7 @@ async def create_customer(
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="该身份证号已存在")
-    # 手机号查重（仅当系统配置 reject_duplicate_phone 为真时拦截）
+    # Duplicate phone check (blocked only when the system config reject_duplicate_phone is enabled)
     phone_error = _duplicate_phone_error(db, data.phone)
     if phone_error:
         raise HTTPException(status_code=400, detail=phone_error)
@@ -266,7 +268,7 @@ async def create_customer(
     customer.name_pinyin = get_pinyin_initial(customer.name)
     db.add(customer)
     db.flush()
-    # 创建 NAS 目录模板
+    # Create the NAS directory template
     salesman = db.query(User).filter(User.id == customer.assigned_salesman_id).first() if customer.assigned_salesman_id else None
     create_customer_directories(
         year=customer.created_at.year if customer.created_at else utcnow().year,
@@ -314,7 +316,7 @@ async def update_customer(
 
     update_data = data.model_dump(exclude_unset=True)
 
-    # 身份证号唯一性预检
+    # ID number uniqueness pre-check
     if "id_number" in update_data and update_data["id_number"] != customer.id_number:
         dup = db.query(Customer).filter(
             Customer.id_number == update_data["id_number"],
@@ -323,13 +325,13 @@ async def update_customer(
         if dup:
             raise HTTPException(status_code=400, detail="该身份证号已存在")
 
-    # 手机号唯一性预检（仅当系统配置 reject_duplicate_phone 为真时拦截）
+    # Phone uniqueness pre-check (blocked only when the system config reject_duplicate_phone is enabled)
     if "phone" in update_data and update_data["phone"] != customer.phone:
         phone_error = _duplicate_phone_error(db, update_data["phone"], exclude_customer_id=customer.id)
         if phone_error:
             raise HTTPException(status_code=400, detail=phone_error)
 
-    # 记录目录同步所需的旧值（应用变更前）
+    # Capture old values needed for directory sync (before applying changes)
     old_name = customer.name
     old_pinyin = customer.name_pinyin
     old_salesman = customer.assigned_salesman
@@ -362,7 +364,7 @@ async def update_customer(
         new_value=update_data,
         request=request,
     )
-    # 发送通知
+    # Send notifications
     title = "客户信息变更"
     content = f"客户 {customer.name} 的信息已被 {user.get('username')} 修改"
     if customer.assigned_salesman_id:
@@ -397,10 +399,11 @@ async def delete_customer(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """软删除客户（移入回收站）。
+    """Soft delete a customer (move to the recycle bin).
 
-    权限：admin / salesman（salesman 仅限自己名下的客户）。
-    名下所有申报批次一并软删除，客户从归属中释放。
+    Permissions: admin / salesman (salesman limited to their own customers).
+    All application batches under the customer are soft deleted together, and the
+    customer is released from assignment.
     """
     user = await get_current_user(request)
     if user.get("role") not in ("admin", "salesman"):
@@ -420,7 +423,7 @@ async def delete_customer(
         Application.is_deleted == False,  # noqa: E712
     ).all()
 
-    # 已进入评审流程（提交评审机构审核及之后）的批次不允许删除客户
+    # Batches already in review (submitted to institution and beyond) block customer deletion
     REVIEW_STAGE_STATUSES = {"提交评审机构审核", "返修", "通过", "不通过"}
     if any(app.status in REVIEW_STAGE_STATUSES for app in applications):
         raise HTTPException(status_code=400, detail="该客户存在评审中的批次，无法删除")
@@ -428,7 +431,7 @@ async def delete_customer(
     now = utcnow()
     customer.is_deleted = True
     customer.deleted_at = now
-    # 释放客户归属，避免软删除记录仍占用归属/公海统计
+    # Release the customer assignment so soft-deleted records do not skew assignment/public pool statistics
     customer.assigned_salesman_id = None
     customer.is_public = False
 
@@ -457,7 +460,7 @@ async def transfer_customer(
     salesman_id: int = None,
     db: Session = Depends(get_db),
 ):
-    """转让客户给其他业务员"""
+    """Transfer the customer to another salesman"""
     user = await get_current_user(request)
     if user.get("role") not in ("admin", "salesman"):
         raise HTTPException(status_code=403, detail="仅业务员和管理员可操作")
@@ -483,10 +486,10 @@ async def transfer_customer(
 
     customer.assigned_salesman_id = salesman_id
 
-    # 同步 NAS 目录（换业务员后目录在新业务员名下）
+    # Sync the NAS directory (after the change the directory lives under the new salesman)
     _sync_customer_directory(db, customer, old_name, old_pinyin, old_salesman.username if old_salesman else "")
 
-    # 操作日志
+    # Operation log
     from models import OperationLog
     log = OperationLog(
         user_id=user.get("id"),
@@ -499,7 +502,7 @@ async def transfer_customer(
     )
     db.add(log)
 
-    # 通知原业务员与新业务员
+    # Notify the previous and new salesmen
     if old_salesman_id and old_salesman_id != salesman_id:
         create_notification(
             db=db,
@@ -531,7 +534,7 @@ async def batch_transfer_customers(
     data: dict = Body(...),
     db: Session = Depends(get_db),
 ):
-    """批量转让客户给其他业务员"""
+    """Batch transfer customers to another salesman"""
     user = await get_current_user(request)
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="仅管理员可操作批量转让")
@@ -561,7 +564,7 @@ async def batch_transfer_customers(
 
         c.assigned_salesman_id = salesman_id
 
-        # 同步 NAS 目录
+        # Sync the NAS directory
         _sync_customer_directory(db, c, old_name, old_pinyin, old_salesman.username if old_salesman else "")
 
         from models import OperationLog
@@ -576,7 +579,7 @@ async def batch_transfer_customers(
         )
         db.add(log)
 
-        # 通知原业务员与新业务员
+        # Notify the previous and new salesmen
         if old_id and old_id != salesman_id:
             create_notification(
                 db=db,

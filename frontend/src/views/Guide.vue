@@ -535,7 +535,7 @@ function filteredItems(g: GuideGroup): GuideItem[] {
   )
 }
 
-// 默认 tab：优先展示当前角色最相关的分组
+// Default tab: show the group most relevant to the current role first
 const defaultGroup = computed(() => {
   if (role.value === 'reviewer') return 'reviewer'
   if (role.value === 'salesman') return 'salesman'

@@ -1,19 +1,21 @@
-"""备份与恢复测试。
+"""Backup and restore tests.
 
-核心目的：让「备份真的能恢复」成为可重复验证的事实，而不是注释里的步骤。
+Core purpose: make "backups can actually be restored" a repeatably verifiable
+fact, not a step list living in comments.
 
-此前备份模块只写不读，恢复步骤仅存在于文档注释中，从未被任何代码执行过。
-本文件覆盖：
-- 备份产物完整性（db / files / manifest 三件套）
-- 恢复校验（损坏备份必须被拒绝，不能写出半个库）
-- 恢复演练（drill）全流程
-- 恢复的破坏性保护（默认拒绝覆盖，force 时自动另存）
-- 路径穿越防护
-- 保留份数清理
-- 备份失败告警
-- 异机/异盘副本推送（BACKUP_SYNC_CMD 钩子）
+The backup module used to be write-only: restore steps existed only in doc
+comments and were never executed by any code. This file covers:
+- backup artifact integrity (db / files / manifest triplet)
+- restore verification (corrupt backups must be rejected; half a database must never be written out)
+- the full restore drill flow
+- destructive-restore protection (overwrite refused by default; force auto-saves a safety copy)
+- path traversal protection
+- retention cleanup
+- backup failure alerting
+- offsite/off-disk copy push (BACKUP_SYNC_CMD hook)
 
-所有测试使用临时目录与临时数据库，绝不触碰开发库 title_service.db。
+All tests use temp directories and temp databases and never touch the dev
+database title_service.db.
 """
 import gzip
 import json
@@ -33,11 +35,12 @@ from tasks.restore import RestoreError
 
 @pytest.fixture(name="backup_env")
 def fixture_backup_env(tmp_path, monkeypatch):
-    """搭建独立的备份环境：临时数据库 + 临时备份目录 + 临时材料目录
+    """Set up an isolated backup environment: temp database + temp backup dir + temp materials dir
 
-    注意：database.py 在 import 时就把 DATABASE_URL 固化为模块常量，因此
-    monkeypatch.setenv 对它无效 —— 必须直接改模块属性，否则备份会打到开发库
-    title_service.db（测试绝不能碰开发库）。
+    Note: database.py freezes DATABASE_URL into a module constant at import time,
+    so monkeypatch.setenv has no effect on it — the module attribute must be
+    patched directly, otherwise backups would hit the dev database
+    title_service.db (tests must never touch the dev database).
     """
     db_path = tmp_path / "source.db"
     backup_dir = tmp_path / "backups"
@@ -51,12 +54,12 @@ def fixture_backup_env(tmp_path, monkeypatch):
     monkeypatch.setenv("BACKUP_COMPRESS", "1")
     monkeypatch.setenv("BACKUP_INCLUDE_FILES", "1")
     monkeypatch.setenv("BACKUP_ENABLED", "1")
-    # 同步钩子必须显式按测试需要打开：开发者机器的 .env 若配了它，
-    # 会让所有「默认关闭」的断言失效
+    # The sync hook must be explicitly enabled per test as needed: if a developer's
+    # local .env configures it, every "off by default" assertion would break
     monkeypatch.delenv("BACKUP_SYNC_CMD", raising=False)
     monkeypatch.setattr("storage.get_storage_root", lambda: str(storage_root))
 
-    # 建一个带业务数据的源库
+    # Create a source database with business data
     from sqlalchemy import create_engine
 
     import models  # noqa: F401
@@ -79,13 +82,13 @@ def fixture_backup_env(tmp_path, monkeypatch):
     con.close()
     engine.dispose()
 
-    # 放两个材料文件
+    # Place two material files
     (storage_root / "a.txt").write_text("material-a", encoding="utf-8")
     sub = storage_root / "sub"
     sub.mkdir()
     (sub / "b.txt").write_text("material-b", encoding="utf-8")
 
-    # 前置断言：确认备份源确实是临时库而非开发库
+    # Precondition assertion: confirm the backup source really is the temp database, not the dev one
     assert backup_task._sqlite_db_path() == os.path.abspath(str(db_path)), (
         "备份源不是临时库 —— 测试会打到开发库，必须修正"
     )
@@ -103,7 +106,7 @@ def _run_backup(include_files=True):
 
 
 class TestBackupArtifacts:
-    """备份产物完整性"""
+    """Backup artifact integrity"""
 
     def test_creates_db_files_manifest(self, backup_env):
         result = _run_backup()
@@ -132,7 +135,7 @@ class TestBackupArtifacts:
 
 
 class TestBackupVerification:
-    """恢复前校验：损坏的备份必须被拒绝"""
+    """Pre-restore verification: corrupt backups must be rejected"""
 
     def test_verify_healthy_backup(self, backup_env):
         _run_backup()
@@ -143,7 +146,7 @@ class TestBackupVerification:
 
     def test_rejects_truncated_gzip(self, backup_env):
         result = _run_backup()
-        # 截断 gzip 文件，模拟传输中断
+        # Truncate the gzip file to simulate a transfer interruption
         with open(result["db_backup"], "rb") as f:
             data = f.read()
         with open(result["db_backup"], "wb") as f:
@@ -155,13 +158,13 @@ class TestBackupVerification:
     def test_rejects_empty_db_file(self, backup_env):
         result = _run_backup()
         with open(result["db_backup"], "wb"):
-            pass  # 截断为 0 字节
+            pass  # Truncate to 0 bytes
 
         with pytest.raises(RestoreError, match="为空"):
             restore_task.verify_backup()
 
     def test_rejects_corrupt_sqlite(self, backup_env):
-        """gzip 完好但内部不是合法 SQLite"""
+        """gzip intact but the contents are not a valid SQLite database"""
         result = _run_backup()
         with gzip.open(result["db_backup"], "wb") as f:
             f.write(b"this is not a sqlite database at all")
@@ -170,9 +173,9 @@ class TestBackupVerification:
             restore_task.verify_backup()
 
     def test_rejects_backup_with_missing_critical_table(self, backup_env):
-        """关键业务表缺失的备份不可用于恢复"""
+        """A backup missing critical business tables must not be usable for restore"""
         result = _run_backup()
-        # 重建一个删掉 users 表的库，再压缩回去
+        # Rebuild a database with the users table dropped, then compress it back
         tmp = backup_env["tmp_path"] / "no_users.sqlite"
         con = sqlite3.connect(str(backup_env["db_path"]))
         con.execute("PRAGMA foreign_keys=OFF")
@@ -199,13 +202,13 @@ class TestBackupVerification:
 
 
 class TestPathTraversalProtection:
-    """归档路径穿越防护"""
+    """Archive path traversal protection"""
 
     def test_rejects_traversal_member(self, backup_env):
         _run_backup()
         result = backup_task.run_backup()
 
-        # 构造含 ../ 的恶意归档替换材料归档
+        # Build a malicious archive containing ../ to replace the materials archive
         evil = backup_env["tmp_path"] / "evil.tar.gz"
         payload = backup_env["tmp_path"] / "payload.txt"
         payload.write_text("pwned", encoding="utf-8")
@@ -231,7 +234,8 @@ class TestPathTraversalProtection:
         shutil.copy2(evil, result["files_backup"])
 
         target = backup_env["tmp_path"] / "restored"
-        # verify 会先拦下；这里直接验证解包逻辑本身也不写出目录
+        # verify catches this first; here we verify the unpacking logic itself
+        # never writes outside the target directory
         with pytest.raises(RestoreError):
             restore_task.restore_files(target=str(target))
 
@@ -239,7 +243,7 @@ class TestPathTraversalProtection:
 
 
 class TestDatabaseRestore:
-    """数据库恢复的破坏性保护"""
+    """Destructive-restore protection for database recovery"""
 
     def test_refuses_to_overwrite_without_force(self, backup_env):
         _run_backup()
@@ -248,7 +252,7 @@ class TestDatabaseRestore:
 
     def test_force_creates_safety_copy(self, backup_env):
         _run_backup()
-        # 改掉现有库里的数据，确认恢复确实把它还原了
+        # Modify data in the existing database, then confirm restore actually reverts it
         con = sqlite3.connect(str(backup_env["db_path"]))
         con.execute("DELETE FROM users")
         con.commit()
@@ -259,7 +263,7 @@ class TestDatabaseRestore:
         assert "safety_copy" in report
         assert os.path.exists(report["safety_copy"]), "覆盖前必须另存现有库"
 
-        # 数据回来了
+        # Data is back
         con = sqlite3.connect(str(backup_env["db_path"]))
         count = con.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         con.close()
@@ -279,12 +283,12 @@ class TestDatabaseRestore:
         _run_backup()
         target = backup_env["tmp_path"] / "fk.db"
         report = restore_task.restore_database(target=str(target))
-        # 正常备份不应有外键问题
+        # A normal backup should have no foreign key issues
         assert not report.get("warnings"), f"意外告警: {report.get('warnings')}"
 
 
 class TestRestoreDrill:
-    """恢复演练：备份可用性的端到端证明"""
+    """Restore drill: end-to-end proof of backup usability"""
 
     def test_drill_succeeds_end_to_end(self, backup_env):
         _run_backup()
@@ -299,10 +303,10 @@ class TestRestoreDrill:
         assert report["readability"]["sample_customer"] == "测试客户"
 
     def test_drill_does_not_touch_production_db(self, backup_env):
-        """演练必须在临时位置进行，不碰生产库"""
+        """The drill must run in a temp location and never touch the production database"""
         _run_backup()
 
-        # 记下生产库的修改时间与内容指纹
+        # Record the production database's mtime and content fingerprint
         before_mtime = os.path.getmtime(backup_env["db_path"])
         con = sqlite3.connect(str(backup_env["db_path"]))
         before = con.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -319,7 +323,7 @@ class TestRestoreDrill:
         assert before_mtime == after_mtime, "演练改动了生产库文件"
 
     def test_drill_cleans_up_temp_dir(self, backup_env):
-        """演练不应在临时目录留下垃圾"""
+        """The drill must not leave junk behind in the temp directory"""
         import tempfile
         _run_backup()
         tmp_root = tempfile.gettempdir()
@@ -339,10 +343,10 @@ class TestRestoreDrill:
 
 
 class TestRetentionCleanup:
-    """保留份数清理"""
+    """Retention cleanup"""
 
     def _seed_backups(self, backup_env, count: int) -> None:
-        """直接构造 count 份备份三件套（不依赖 run_backup，避免同秒时间戳冲突）"""
+        """Directly construct count backup triplets (without run_backup, to avoid same-second timestamp collisions)"""
         backup_dir = backup_env["backup_dir"]
         backup_dir.mkdir(parents=True, exist_ok=True)
 
@@ -372,7 +376,7 @@ class TestRetentionCleanup:
         assert len(deleted) == 6, f"应删除 2 份 × 3 个文件 = 6 个，实际 {len(deleted)}"
 
     def test_cleanup_removes_matching_triplets(self, backup_env):
-        """清理时必须把 db/files/manifest 三件套一起删，不留孤儿"""
+        """Cleanup must delete the db/files/manifest triplet together, leaving no orphans"""
         self._seed_backups(backup_env, 5)
         backup_task._cleanup_old(str(backup_env["backup_dir"]), keep=2)
 
@@ -390,7 +394,7 @@ class TestRetentionCleanup:
         assert len(db_stamps) == 2
 
     def test_keeps_newest(self, backup_env):
-        """保留的必须是最新的几份"""
+        """The kept ones must be the newest"""
         self._seed_backups(backup_env, 4)
         backup_task._cleanup_old(str(backup_env["backup_dir"]), keep=2)
 
@@ -399,7 +403,7 @@ class TestRetentionCleanup:
             for n in os.listdir(backup_env["backup_dir"])
             if n.startswith("manifest_")
         )
-        # 2026-01-01..04，应保留最后两个
+        # 2026-01-01..04; the last two should be kept
         assert stamps == ["20260103_030000", "20260104_030000"], f"保留的不是最新份: {stamps}"
 
     def test_no_cleanup_when_under_limit(self, backup_env):
@@ -411,11 +415,11 @@ class TestRetentionCleanup:
 
 
 class TestBackupFailureAlerting:
-    """备份失败必须通知管理员（此前只写日志，等于静默失败）"""
+    """Backup failures must notify admins (previously log-only, i.e. silent failure)"""
 
     @pytest.fixture(name="admin_session")
     def fixture_admin_session(self, backup_env):
-        """在临时库里建一个管理员，并把 database.SessionLocal 指向它"""
+        """Create an admin in the temp database and point database.SessionLocal at it"""
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
@@ -439,7 +443,7 @@ class TestBackupFailureAlerting:
         return {"Session": Session, "admin_id": admin_id, "db_path": backup_env["db_path"]}
 
     def _make_db_backup_fail(self, monkeypatch):
-        """让数据库备份失败，但不破坏库文件（否则告警也写不进去）"""
+        """Make the database backup fail without corrupting the db file (otherwise the alert could not be written either)"""
         def boom(dest_dir, timestamp):
             raise RuntimeError("模拟磁盘写入失败")
 
@@ -475,7 +479,7 @@ class TestBackupFailureAlerting:
             )
             db.add(second)
             db.commit()
-            # fixture 里种了一个 admin 角色的 backupuser，预期数量需按实际查询
+            # The fixture seeds a backupuser with the admin role; the expected count must be queried for real
             expected = db.query(models.User).filter(
                 models.User.role == "admin", models.User.is_deleted == False  # noqa: E712
             ).count()
@@ -498,7 +502,7 @@ class TestBackupFailureAlerting:
         assert count == expected, f"应通知全部 {expected} 位管理员，实际 {count} 条"
 
     def test_skips_deleted_admins(self, backup_env, admin_session, monkeypatch):
-        """已删除的管理员不应收到告警"""
+        """Deleted admins must not receive alerts"""
         import models
         db = admin_session["Session"]()
         try:
@@ -545,7 +549,7 @@ class TestBackupFailureAlerting:
         assert count == 0, "成功备份不应产生失败告警"
 
     def test_alert_failure_does_not_break_backup_result(self, backup_env, monkeypatch):
-        """告警自身出错不能影响备份结果返回"""
+        """An error in alerting itself must not affect the backup result"""
         def boom(*a, **kw):
             raise RuntimeError("告警通道故障")
 
@@ -553,13 +557,13 @@ class TestBackupFailureAlerting:
         self._make_db_backup_fail(monkeypatch)
 
         result = backup_task.run_backup(include_files=False)
-        # 备份失败但函数正常返回结果（不抛异常）
+        # Backup failed but the function returns the result normally (no exception)
         assert isinstance(result, dict)
         assert result["success"] is False
 
 
 class TestSchedulerRestoreDrill:
-    """调度器在备份成功后应自动做恢复演练"""
+    """The scheduler should automatically run a restore drill after a successful backup"""
 
     def test_drill_called_after_successful_backup(self, backup_env, monkeypatch):
         from utils import scheduler
@@ -606,10 +610,10 @@ class TestSchedulerRestoreDrill:
 
 
 class TestBackupModuleRobustness:
-    """备份模块的健壮性"""
+    """Backup module robustness"""
 
     def test_backup_failure_does_not_raise(self, backup_env, monkeypatch):
-        """数据库备份失败时 run_backup 必须正常返回而非抛异常"""
+        """run_backup must return normally instead of raising when the database backup fails"""
         def boom(dest_dir, timestamp):
             raise RuntimeError("模拟备份失败")
 
@@ -619,14 +623,14 @@ class TestBackupModuleRobustness:
         assert result["error"]
 
     def test_missing_db_file_is_reported(self, backup_env):
-        """库文件真的不存在时也要正常返回错误而非抛异常"""
+        """A genuinely missing db file must also return an error normally instead of raising"""
         os.remove(backup_env["db_path"])
         result = backup_task.run_backup(include_files=False)
         assert result["success"] is False
         assert result["error"]
 
     def test_manifest_written_even_on_failure(self, backup_env, monkeypatch):
-        """失败也要写 manifest，便于判断「今天是否已备份」"""
+        """Write the manifest even on failure, so "has today's backup run" can be determined"""
         def boom(dest_dir, timestamp):
             raise RuntimeError("模拟备份失败")
 
@@ -646,12 +650,15 @@ class TestBackupModuleRobustness:
 
 
 class TestTableNameValidation:
-    """表名白名单校验。
+    """Table name whitelist validation.
 
-    恢复模块里有两处 `SELECT COUNT(*) FROM "{table}"`：SQL 占位符只能绑值、
-    不能绑标识符，因此表名只能拼进语句。当前表名全部来自模块常量，没有注入
-    风险；这组测试把「安全」变成可验证的约束 —— 一旦有人把表名改成来自配置
-    或用户输入，非法名字会被直接拒绝，而不是静默拼进 SQL。
+    The restore module has two `SELECT COUNT(*) FROM "{table}"` spots: SQL
+    placeholders can only bind values, not identifiers, so table names must be
+    spliced into the statement. Table names currently all come from module
+    constants and carry no injection risk; these tests turn "safe" into a
+    verifiable constraint — if anyone changes table names to come from config
+    or user input, invalid names get rejected outright instead of being
+    silently spliced into SQL.
     """
 
     def test_accepts_normal_table_names(self):
@@ -663,34 +670,36 @@ class TestTableNameValidation:
         "users' OR '1'='1",
         "users; DROP TABLE users",
         "users--",
-        "用户表",          # 非 ASCII
-        "users table",     # 空格
-        "",                # 空
-        "1users",          # 数字开头
-        "users)",          # 括号
-        "users\n",         # 换行
+        "用户表",          # non-ASCII
+        "users table",     # whitespace
+        "",                # empty
+        "1users",          # starts with a digit
+        "users)",          # parenthesis
+        "users\n",         # newline
     ])
     def test_rejects_dangerous_identifiers(self, bad):
         with pytest.raises(RestoreError):
             restore_task._safe_ident(bad)
 
     def test_critical_tables_are_valid(self):
-        """常量表名必须全部通过校验（否则恢复流程会自己把自己拦下）"""
+        """Constant table names must all pass validation (otherwise the restore flow would block itself)"""
         for name in restore_task.CRITICAL_TABLES:
             assert restore_task._safe_ident(name) == name
 
 
 class TestOffsiteSync:
-    """异机/异盘副本推送（BACKUP_SYNC_CMD 钩子）。
+    """Offsite/off-disk copy push (BACKUP_SYNC_CMD hook).
 
-    背景：备份目录与数据库默认同在一台宿主机，宿主机损坏两者皆失。
-    钩子让每次成功备份后把副本推到任意目标；这里验证它的全部契约：
-    默认关闭、占位符替换、失败不推翻备份成功、失败必须告警、绝不抛异常。
+    Background: the backup directory and the database live on the same host by
+    default, so host failure loses both. The hook pushes a copy to an arbitrary
+    target after each successful backup; all of its contracts are verified here:
+    off by default, placeholder replacement, failure never overturns backup
+    success, failure must alert, and it never raises.
     """
 
     @staticmethod
     def _fake_subprocess(monkeypatch, returncode=0, stderr="", exc=None):
-        """替身 subprocess：记录收到的命令，返回预设结果或抛预设异常。"""
+        """Subprocess stand-in: records the commands it receives, returns a canned result or raises a canned exception."""
         calls = []
 
         def fake_run(cmd, **kwargs):
@@ -715,7 +724,7 @@ class TestOffsiteSync:
         return alerts
 
     def test_disabled_by_default_never_spawns_process(self, backup_env, monkeypatch):
-        """不配置 BACKUP_SYNC_CMD 时必须零开销：一个进程都不该被拉起。"""
+        """With no BACKUP_SYNC_CMD configured there must be zero overhead: not a single process may be spawned."""
         calls = self._fake_subprocess(
             monkeypatch,
             exc=AssertionError("未配置同步命令时不应调用 subprocess"),
@@ -748,7 +757,7 @@ class TestOffsiteSync:
         assert alerts == [], "同步成功不应触发任何告警"
 
     def test_failure_keeps_backup_success_and_alerts(self, backup_env, monkeypatch):
-        """本地备份是成功的；副本推不出去只降级为告警，不能推翻备份本身。"""
+        """The local backup succeeded; a failed copy push only degrades to an alert and must not overturn the backup itself."""
         monkeypatch.setenv("BACKUP_SYNC_CMD", "rsync -a {backup_dir}/ nosuchhost:/x/")
         self._fake_subprocess(monkeypatch, returncode=23, stderr="rsync: connection refused")
         alerts = self._captured_alerts(monkeypatch)
@@ -778,7 +787,7 @@ class TestOffsiteSync:
         assert len(alerts) == 1
 
     def test_hook_exception_never_breaks_backup(self, backup_env, monkeypatch):
-        """run_backup 的「绝不抛异常」契约对同步通道同样成立。"""
+        """run_backup's "never raises" contract holds for the sync channel too."""
         monkeypatch.setenv("BACKUP_SYNC_CMD", "whatever")
 
         def boom(*a, **k):
@@ -792,11 +801,12 @@ class TestOffsiteSync:
         assert "同步通道内部炸了" in result["offsite_sync"]["error"]
 
     def test_failed_backup_does_not_trigger_sync(self, backup_env, monkeypatch):
-        """备份失败时不推送残缺副本 —— 推一份坏备份出去比不推更危险。"""
+        """Do not push an incomplete copy when the backup failed — pushing a bad backup is more dangerous than not pushing."""
         monkeypatch.setenv("BACKUP_SYNC_CMD", "true")
-        # 让数据库备份阶段失败：DATABASE_URL 指向不存在的目录，connect 必然报错。
-        # backup.py 的 _db_url() 是在调用时才 from database import DATABASE_URL，
-        # 所以改 database 模块属性即可生效（与 backup_env fixture 同一手法）。
+        # Make the database backup stage fail: DATABASE_URL points at a nonexistent
+        # directory, so connect is guaranteed to error. backup.py's _db_url() only
+        # does `from database import DATABASE_URL` at call time, so patching the
+        # database module attribute takes effect (same technique as the backup_env fixture).
         monkeypatch.setattr(
             "database.DATABASE_URL",
             f"sqlite:///{backup_env['tmp_path']}/nonexistent_dir/x.db",

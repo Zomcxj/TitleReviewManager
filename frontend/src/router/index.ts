@@ -48,7 +48,7 @@ const router = createRouter({
 router.beforeEach((to, _from, next) => {
   const token = localStorage.getItem('access_token')
 
-  // 强制改密拦截：已登录且被标记必须改密时，只允许停留在改密页或登录页
+  // Forced password-change guard: when logged in and flagged as must-change-password, only the change-password or login page is allowed
   if (token && localStorage.getItem('must_change_password') === '1') {
     if (to.path !== '/change-password' && to.path !== '/login') {
       next('/change-password')
@@ -61,7 +61,7 @@ router.beforeEach((to, _from, next) => {
       next('/login')
       return
     }
-    // 角色权限检查
+    // Role permission check
     const requiredRoles = to.meta.roles as string[] | undefined
     if (requiredRoles && requiredRoles.length > 0) {
       const userStr = localStorage.getItem('user_role')

@@ -6,7 +6,7 @@ from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 
-# 加载 .env 文件
+# Load the .env file
 load_dotenv()
 
 # this is the Alembic Config object, which provides
@@ -71,8 +71,8 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    # SQLite 不支持 ALTER 约束，需用 batch 模式（copy-and-move）执行迁移；
-    # PostgreSQL 等支持 ALTER 的数据库保持默认行为。
+    # SQLite does not support ALTER constraints, so migrations run in batch mode (copy-and-move);
+    # databases that support ALTER, such as PostgreSQL, keep the default behavior.
     is_sqlite = str(config.get_main_option("sqlalchemy.url") or "").startswith("sqlite")
 
     with connectable.connect() as connection:

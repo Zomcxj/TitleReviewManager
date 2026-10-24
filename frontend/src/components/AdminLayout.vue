@@ -205,7 +205,7 @@ const authStore = useAuthStore()
 const sidebarCollapsed = ref(false)
 const menuRef = ref()
 
-/** 折叠组归属路由：进入组内路由时自动展开，离开时收起 */
+/** Routes owned by each collapsible group: entering a group route auto-expands it, leaving collapses it */
 const OPS_TOOL_PATHS = ['/admin/registration-links', '/admin/import']
 const SYSTEM_PATHS = [
   '/admin/users', '/admin/transfer', '/admin/audit-logs', '/admin/system-config',
@@ -222,7 +222,7 @@ watch(() => route.path, (path) => {
   })
 }, { immediate: true })
 
-/** 逾期未跟进数量，用于菜单角标（>0 才展示） */
+/** Number of overdue follow-ups, used for the menu badge (shown only when > 0) */
 const overdueCount = ref(0)
 let overdueTimer: ReturnType<typeof setInterval> | null = null
 
@@ -231,7 +231,7 @@ async function loadOverdueCount() {
     const { data } = await api.get('/api/follow-ups/summary')
     overdueCount.value = data.overdue || 0
   } catch {
-    // 未登录/无权限时静默忽略
+    // Silently ignore when not logged in / no permission
     overdueCount.value = 0
   }
 }
@@ -365,7 +365,7 @@ function handleMenuSelect(index: string) {
   --el-menu-bg-color: transparent;
 }
 
-/* 折叠组内子菜单容器与子项：保持深色透明底（Element 默认白底会漏出来） */
+/* Submenu container and items inside collapsible groups: keep the dark transparent background (Element's default white would leak through) */
 .nav-menu :deep(.el-sub-menu .el-menu),
 .nav-menu :deep(.el-sub-menu .el-menu--inline) {
   background: transparent;
@@ -425,7 +425,7 @@ function handleMenuSelect(index: string) {
   line-height: 1;
 }
 
-/* 折叠组标题：几何尺寸与常驻菜单项完全一致，仅靠间距区分分组 */
+/* Collapsible group titles: geometry identical to regular menu items; groups are told apart by spacing only */
 .nav-menu :deep(.el-sub-menu.nav-group .el-sub-menu__title) {
   color: #94a3b8;
   margin: 2px 0;
@@ -461,7 +461,7 @@ function handleMenuSelect(index: string) {
   padding-left: 50px;
 }
 
-/* 独立徽标（无默认插槽）：改为静态定位，跟在文字右侧 */
+/* Standalone badge (no default slot): use static positioning so it sits right after the text */
 .nav-menu .nav-item .nav-badge :deep(.el-badge__content) {
   position: static;
   transform: none;
@@ -490,7 +490,7 @@ function handleMenuSelect(index: string) {
   align-items: center;
 }
 
-/* 折叠态：折叠组标题与普通项同样居中（Element 默认 padding 会让组图标偏位） */
+/* Collapsed state: center group titles like regular items (Element's default padding would misplace the group icon) */
 .sidebar :deep(.el-menu--collapse) .nav-group .el-sub-menu__title {
   padding: 0;
   margin-top: 2px;
@@ -503,7 +503,7 @@ function handleMenuSelect(index: string) {
   margin-right: 0;
 }
 
-/* 折叠态隐藏组箭头：只留图标，避免与菜单图标重叠 */
+/* Collapsed state hides the group arrow: keep only the icon to avoid overlapping the menu icon */
 .sidebar :deep(.el-menu--collapse) .nav-group .el-sub-menu__title .el-sub-menu__icon-arrow {
   display: none;
 }
@@ -687,7 +687,7 @@ function handleMenuSelect(index: string) {
 </style>
 
 <style>
-/* 折叠态弹出子菜单（teleport 到 body，scoped 样式覆盖不到，需全局样式） */
+/* Collapsed-state popup submenu (teleported to body, out of reach of scoped styles; global styles needed) */
 .nav-sub-popper.el-popper {
   background: #0f172a;
   border: 1px solid rgba(255, 255, 255, 0.1);

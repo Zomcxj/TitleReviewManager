@@ -1,14 +1,19 @@
 """
-前端错误上报接口
+Frontend error reporting API
 
-用途：前端捕获的异常（Vue 渲染错误、未处理的 Promise 拒绝、接口 5xx）
-上报到这里，管理员可在界面查看真实错误与频次，而不是依赖用户口头描述。
+Purpose: exceptions caught by the frontend (Vue render errors, unhandled Promise
+rejections, API 5xx responses) are reported here so admins can see real errors and
+their frequency instead of relying on verbal user reports.
 
-设计要点：
-- **匿名可上报**：登录页出错时用户还没登录，因此不强制鉴权
-- **限流**：按 IP 限制（复用 login_attempts 表），防止被刷爆表
-- **截断**：message/stack 截断保存，避免超大 payload 撑爆数据库
-- **不记录敏感信息**：前端上报前会过滤，后端再做一次长度限制
+Design notes:
+- **Anonymous reporting allowed**: users may hit errors on the login page before
+  authenticating, so auth is not enforced
+- **Rate limiting**: per-IP limits (reusing the login_attempts table) to prevent
+  flooding the table
+- **Truncation**: message/stack are truncated on save so oversized payloads do not
+  blow up the database
+- **No sensitive data**: the frontend filters before reporting, and the backend
+  applies a length limit as a second line of defense
 """
 import logging
 
@@ -38,9 +43,10 @@ class ClientErrorReport(BaseModel):
 
 
 def _try_identify_user(request: Request, db: Session):
-    """尝试识别上报者（未登录返回 None, None）。
+    """Try to identify the reporter (returns None, None when not logged in).
 
-    不强制鉴权：登录页出错的用户还没有 token，强制鉴权会丢掉最关键的一类错误。
+    Auth is not enforced: users who hit errors on the login page have no token yet,
+    and enforcing auth would drop the most critical class of errors.
     """
     token = request.cookies.get("access_token")
     if not token:
@@ -67,7 +73,7 @@ async def report_client_error(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """接收前端错误上报（匿名可用，按 IP 限流）"""
+    """Receive a frontend error report (anonymous allowed, rate limited by IP)"""
     from utils.login_guard import check_ip_rate_limit, record_attempt
 
     client_ip = get_client_ip(request)
@@ -98,7 +104,7 @@ async def list_client_errors(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """查看前端错误列表（仅管理员）"""
+    """List frontend error reports (admin only)"""
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以查看前端错误")
 
@@ -139,7 +145,7 @@ async def delete_client_error(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """删除单条错误记录（仅管理员）"""
+    """Delete a single error record (admin only)"""
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以操作")
     row = db.query(ClientError).filter(ClientError.id == error_id).first()
@@ -155,7 +161,7 @@ async def clear_client_errors(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """清空所有前端错误记录（仅管理员）"""
+    """Clear all frontend error records (admin only)"""
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以操作")
     count = db.query(ClientError).delete(synchronize_session=False)

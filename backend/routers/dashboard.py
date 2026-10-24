@@ -148,9 +148,9 @@ async def get_rejection_stats_endpoint(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """材料退回原因统计（哪些材料最常被退回、按业务员对比）。
+    """Material rejection reason statistics (which materials are rejected most often, compared by salesman).
 
-    业务员仅统计自己名下客户；admin/reviewer 统计全部。
+    Salesmen only get stats for their own customers; admin/reviewer get all.
     """
     from utils.rejection_stats import get_rejection_stats
     salesman_id = None
@@ -164,7 +164,7 @@ async def get_workbench_endpoint(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """今日待办：跟进、内部审核、申报截止、待收款（按角色过滤）。"""
+    """Today's workbench: follow-ups, internal reviews, application deadlines, pending payments (filtered by role)."""
     from utils.workbench import get_workbench
     return get_workbench(db, current_user)
 
@@ -175,9 +175,9 @@ async def get_conversion_funnel(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """申报转化漏斗：咨询 → 建档 → 提交机构 → 通过。
+    """Application conversion funnel: inquiry → record creation → submit to institution → approved.
 
-    业务员仅统计自己名下客户。
+    Salesmen only get stats for their own customers.
     """
     from utils.conversion import get_conversion_funnel as _funnel
     salesman_id = None

@@ -1,7 +1,7 @@
-"""SLA 定时任务、公海池与批量操作测试
+"""SLA scheduled tasks, public pool, and batch operation tests
 
-覆盖：SLA 自动回收（此前因 or_ 未导入而从未生效）、软删除过滤、
-批量操作条数上限与频率限制。
+Covers: SLA auto-recovery (previously never effective due to a missing or_
+import), soft-delete filtering, batch size limits, and rate limiting.
 """
 from datetime import datetime, timedelta
 
@@ -31,10 +31,10 @@ def _login(client, username, password):
 
 
 class TestSlaRecovery:
-    """SLA 自动回收（sla_scheduler）"""
+    """SLA auto-recovery (sla_scheduler)"""
 
     def test_never_followed_new_customer_not_recovered(self, db, pool_salesman):
-        """新建但从未跟进的客户不应被立刻回收（此前会误伤）"""
+        """A new customer never followed up must not be recovered immediately (false positive before)"""
         from tasks.sla_scheduler import check_and_recovery_customers
         c = models.Customer(name="新客户", id_number=VALID_ID, phone="13800138001",
                             assigned_salesman_id=pool_salesman.id, name_pinyin="XKH",
@@ -46,7 +46,7 @@ class TestSlaRecovery:
         assert c.is_public is False, "新建客户不应被回收"
 
     def test_long_untouched_customer_recovered(self, db, pool_salesman):
-        """超过回收天数未跟进的客户应被回收"""
+        """Customers untouched past the recovery window must be recovered"""
         from tasks.sla_scheduler import POOL_RECOVERY_DAYS, check_and_recovery_customers
         old = utcnow() - timedelta(days=POOL_RECOVERY_DAYS + 3)
         c = models.Customer(name="久未跟进", id_number=VALID_ID, phone="13800138001",
@@ -60,7 +60,7 @@ class TestSlaRecovery:
         assert c.assigned_salesman_id is None
 
     def test_soft_deleted_customer_skipped(self, db, pool_salesman):
-        """已软删除的客户不应被 SLA 任务处理"""
+        """Soft-deleted customers must not be processed by the SLA task"""
         from tasks.sla_scheduler import POOL_RECOVERY_DAYS, check_and_recovery_customers
         old = utcnow() - timedelta(days=POOL_RECOVERY_DAYS + 3)
         c = models.Customer(name="已删除", id_number=VALID_ID, phone="13800138001",
@@ -73,7 +73,7 @@ class TestSlaRecovery:
         assert c.is_public is False, "软删除客户不应被 SLA 任务改动"
 
     def test_sla_deadline_cleared_after_notify(self, db, pool_salesman):
-        """SLA 超时通知后应清除 deadline，避免每次运行重复轰炸"""
+        """After the SLA timeout notification the deadline must be cleared to avoid repeated spam on every run"""
         from tasks.sla_scheduler import check_sla_deadlines
         c = models.Customer(name="超时客户", id_number=VALID_ID, phone="13800138001",
                             assigned_salesman_id=pool_salesman.id, name_pinyin="CS",
@@ -87,15 +87,15 @@ class TestSlaRecovery:
 
 class TestPublicPool:
     def test_claim_respects_limit(self, client, db, pool_salesman):
-        """领取公海客户受持有上限约束"""
+        """Claiming public pool customers is bound by the holding limit"""
         from utils.system_config import invalidate_cache, set_config
         set_config(db, "pool_claim_limit", 1)
         invalidate_cache()
-        # 已有 1 个非公海客户
+        # Already holds 1 non-public-pool customer
         db.add(models.Customer(name="已有", id_number=VALID_ID, phone="13800138001",
                                assigned_salesman_id=pool_salesman.id, name_pinyin="YY",
                                is_public=False))
-        # 公海里 1 个
+        # 1 in the public pool
         p = models.Customer(name="公海", id_number="110101199001010023", phone="13800138002",
                             name_pinyin="GH", is_public=True, public_at=utcnow())
         db.add(p)
@@ -149,7 +149,7 @@ class TestBatchGuards:
         assert r.status_code == 400
 
     def test_batch_assign_sets_sla_not_expired(self, client, db, test_user, pool_salesman):
-        """批量分配应设置 24h 后的 SLA，而不是"立刻逾期" """
+        """Batch assignment should set an SLA 24h out, not "immediately overdue" """
         c = models.Customer(name="批量", id_number=VALID_ID, phone="13800138001", name_pinyin="PL")
         db.add(c)
         db.commit()
@@ -178,17 +178,17 @@ class TestRecycleBin:
         assert r.status_code == 200
         ids = [x["id"] for x in client.get("/api/customers/").json()["items"]]
         assert cid not in ids
-        # 回收站可见
+        # Visible in the recycle bin
         names = [(x["resource_type"], x["id"]) for x in client.get("/api/recycle-bin/").json()["items"]]
         assert ("customer", cid) in names
-        # 恢复
+        # Restore
         assert client.post("/api/recycle-bin/restore",
                            json={"resource_type": "customer", "id": cid}).status_code == 200
         ids = [x["id"] for x in client.get("/api/customers/").json()["items"]]
         assert cid in ids
 
     def test_delete_blocked_for_reviewing_customer(self, client, db, test_user):
-        """有评审中批次的客户不能删除"""
+        """Customers with an application under review must not be deletable"""
         c = models.Customer(name="评审中", id_number=VALID_ID, phone="13800138001", name_pinyin="PSZ")
         db.add(c)
         db.commit()

@@ -72,7 +72,7 @@ async def update_user(user_id: int, data: UserUpdate, request: Request, db: Sess
         raise HTTPException(status_code=404, detail="用户不存在")
     upd = data.model_dump(exclude_unset=True)
     if "password" in upd:
-        # 明文密码 pop 出来单独 hash，避免 setattr 循环把明文写入 User.password
+        # Pop the plaintext password out and hash it separately, avoiding the setattr loop writing plaintext into User.password
         upd["password_hash"] = hash_password(upd.pop("password"))
     if (
         "username" in upd
@@ -96,7 +96,7 @@ async def delete_user(user_id: int, request: Request, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail="用户不存在")
     if u.id == user.get("id"):
         raise HTTPException(status_code=400, detail="不能删除自己")
-    # 名下仍有客户的业务员不允许删除，需先转让客户
+    # Salesmen who still own customers cannot be deleted; customers must be transferred first
     if db.query(Customer).filter(Customer.assigned_salesman_id == user_id).first():
         raise HTTPException(status_code=400, detail="该业务员名下还有客户，请先转让")
     db.delete(u)
@@ -116,10 +116,10 @@ async def change_password(data: PasswordChange, request: Request, db: Session = 
     if data.old_password == data.new_password:
         raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
     u.password_hash = hash_password(data.new_password)
-    # 改密成功后解除强制改密标记，并记录改密时间（供密码有效期策略使用）
+    # After a successful change, clear the must-change-password flag and record the change time (used by the password expiry policy)
     u.must_change_password = False
     u.password_changed_at = utcnow()
-    # 自增 token 版本：其他设备上的旧 token 立即失效（改密后必须重新登录）
+    # Bump the token version: old tokens on other devices are invalidated immediately (re-login required after password change)
     u.token_version = (u.token_version or 0) + 1
     db.commit()
     new_token = create_access_token({
@@ -127,7 +127,7 @@ async def change_password(data: PasswordChange, request: Request, db: Session = 
         "role": u.role, "tv": u.token_version,
     })
     resp = JSONResponse(content={"message": "密码已修改，请使用新密码重新登录"})
-    # 当前会话换发新 token，避免用户改密后立刻被踢出
+    # Reissue a new token for the current session, so the user is not logged out right after changing the password
     from utils.request_context import cookie_extra_kwargs
     resp.set_cookie(
         key="access_token", value=new_token,
@@ -141,14 +141,14 @@ async def change_password(data: PasswordChange, request: Request, db: Session = 
 async def reset_user_password(user_id: int, data: dict, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
     admin_only(user)
-    # 验证管理员密码
+    # Verify the admin password
     admin = db.query(User).filter(User.id == user.get("user_id")).first()
     if not admin:
         raise HTTPException(status_code=404, detail="管理员不存在")
     admin_password = data.get("admin_password", "")
     if not verify_password(admin_password, admin.password_hash):
         raise HTTPException(status_code=400, detail="管理员密码错误")
-    # 修改目标用户密码
+    # Change the target user's password
     new_password = data.get("new_password", "")
     if len(new_password) < 6:
         raise HTTPException(status_code=400, detail="新密码至少6位")
@@ -156,10 +156,10 @@ async def reset_user_password(user_id: int, data: dict, request: Request, db: Se
     if not target:
         raise HTTPException(status_code=404, detail="目标用户不存在")
     target.password_hash = hash_password(new_password)
-    # 管理员重置的密码属于临时口令，要求该用户下次登录后自行修改
+    # An admin-reset password is a temporary credential; the user must change it on next login
     target.must_change_password = True
     target.password_changed_at = utcnow()
-    # 使目标用户已登录的会话立即失效
+    # Invalidate the target user's existing logged-in sessions immediately
     target.token_version = (target.token_version or 0) + 1
     db.commit()
     return {"message": "密码已修改，该用户下次登录需自行修改密码"}

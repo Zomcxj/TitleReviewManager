@@ -176,7 +176,7 @@ async def batch_submit_to_institution(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_role("admin", "salesman")),
 ):
-    """批量提交评审机构：逐条校验状态/归属/材料完备性，通过者统一流转并通知。"""
+    """Batch submit to institution: validate status/ownership/material completeness per item; qualifying batches are transitioned together and notified."""
     from enums import ApplicationStatus
 
     target_status = ApplicationStatus.SUBMITTED.value
@@ -232,7 +232,7 @@ async def batch_submit_to_institution(
             },
         ))
 
-        # 通知：仅在客户有归属业务员时发送（业务员 + 全部管理员）
+        # Notifications: sent only when the customer has an assigned salesman (salesman + all admins)
         if customer and customer.assigned_salesman_id:
             create_notification(
                 db=db,
@@ -270,7 +270,7 @@ async def batch_remind(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_role("admin", "salesman")),
 ):
-    """批量催办：向批次所属客户的业务员发送催办通知。"""
+    """Batch reminder: send reminder notifications to the salesmen of the batches' customers."""
     role = current_user.get("role")
     user_id = current_user.get("user_id") or current_user.get("id")
     custom_message = (message or "").strip()

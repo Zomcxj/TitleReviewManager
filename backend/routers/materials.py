@@ -3,15 +3,16 @@ import os as _os
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
 from auth import get_current_user
 from database import get_db
 from enums import ALLOWED_FILE_EXTENSIONS, MAX_FILE_SIZE, AuditStatus, MaterialCategory
 from models import Application, Customer, Material, OperationLog
 from schemas import MaterialResponse
-from storage import customer_dir, get_pinyin_initial, read_file, save_file
+from storage import customer_dir, full_path, get_pinyin_initial, open_file, save_file_from_fileobj
 from storage import delete_file as storage_delete
 from storage import list_files as storage_list
 from utils.system_config import get_config
@@ -29,7 +30,7 @@ def require_write_role(user: dict):
 
 
 def check_customer_ownership(user: dict, customer: Customer):
-    """数据隔离：业务员只能操作自己名下客户的材料，admin/reviewer 不限。"""
+    """Data isolation: salesmen can only operate on materials of their own customers; admin/reviewer are unrestricted."""
     if user.get("role") == "salesman" and (
         not customer or customer.assigned_salesman_id != (user.get("id") or user.get("user_id"))
     ):
@@ -37,7 +38,7 @@ def check_customer_ownership(user: dict, customer: Customer):
 
 
 def _max_file_size(db: Session) -> tuple[int, int]:
-    """单文件大小上限，返回 (字节数, MB 数)。由系统配置 max_file_size_mb 驱动，enums.MAX_FILE_SIZE 作为兜底。"""
+    """Per-file size limit, returns (bytes, MB). Driven by the system config max_file_size_mb, with enums.MAX_FILE_SIZE as fallback."""
     try:
         mb = int(get_config(db, "max_file_size_mb"))
     except (TypeError, ValueError):
@@ -76,7 +77,7 @@ async def list_materials(
 
     q = db.query(Material).filter(Material.application_id == application_id)
     if keyword:
-        # 过滤 LIKE 通配符特殊字符，避免通配符注入
+        # Strip LIKE wildcard special characters to prevent wildcard injection
         keyword = keyword.replace("%", "").replace("_", "").replace("\\", "")
     if keyword:
         q = q.filter(Material.filename.like(f"%{keyword}%"))
@@ -119,30 +120,34 @@ async def upload_material(
         raise HTTPException(status_code=400, detail=f"不支持的文件类型：{ext}")
 
     max_bytes, max_mb = _max_file_size(db)
-    if file.size is not None:
-        # 优先使用请求声明的文件大小，超限时不再读取内容
-        if file.size > max_bytes:
-            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{max_mb}MB")
-        content = await file.read()
-    else:
-        content = await file.read()
-        if len(content) > max_bytes:
-            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{max_mb}MB")
+    # Size check BEFORE reading any content (declared size is set by Starlette from
+    # the multipart header, so an oversized upload is rejected without buffering it)
+    if file.size is not None and file.size > max_bytes:
+        raise HTTPException(status_code=400, detail=f"文件大小超过限制：{max_mb}MB")
 
-    # 内容校验：防止把其他格式改扩展名伪装成 pdf/图片上传
+    # Content validation: prevent files of other formats being disguised as pdf/images by extension renaming
     from utils.upload_guard import validate_file_content
-    content_err = validate_file_content(file.filename, content)
+    head = await file.read(64)
+    if not head and (file.size or 0) > 0:
+        raise HTTPException(status_code=400, detail="文件内容为空")
+    content_err = validate_file_content(file.filename, head)
     if content_err:
         raise HTTPException(status_code=400, detail=content_err)
+    await file.seek(0)  # rewind so save_file_from_fileobj streams from the very start
 
     rel = _get_customer_dir(customer)
-    # 落盘与入库统一使用净化后的文件名，避免把 ../ 之类的原始名写进数据库
+    # Use the sanitized filename for both disk storage and DB records, avoiding raw names like ../ being written to the database
     from utils.upload_guard import safe_filename
     clean_name = safe_filename(file.filename)
-    stored_path = save_file(rel, category, clean_name, content)
+    # Chunked write: peak memory is one 1MB chunk instead of the whole file
+    try:
+        stored_path, file_bytes = save_file_from_fileobj(rel, category, clean_name, file.file, max_bytes=max_bytes)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"文件大小超过限制：{max_mb}MB") from None
 
-    # 版本号加行级锁，避免并发上传同类别材料时取到相同版本号
-    # （SQLite 忽略 FOR UPDATE 但写事务本身串行；PostgreSQL 下真正阻塞并发事务）
+    # Row-level lock on the version number, so concurrent uploads of the same category
+    # cannot pick the same version (SQLite ignores FOR UPDATE but write transactions are
+    # serial anyway; under PostgreSQL it genuinely blocks concurrent transactions)
     max_version = (
         db.query(Material)
         .filter(Material.application_id == application_id, Material.category == category)
@@ -157,7 +162,7 @@ async def upload_material(
         category=category,
         filename=clean_name,
         file_path=stored_path,
-        file_size=len(content),
+        file_size=file_bytes,
         uploader_id=user.get("user_id") or user.get("id"),
         version=new_version,
     )
@@ -195,7 +200,7 @@ async def delete_material(
     try:
         storage_delete(material.file_path)
     except Exception:
-        # 物理文件删除失败仅告警，不阻断数据库记录删除
+        # Physical file deletion failure only warns; it does not block the DB record deletion
         logger.warning("删除材料物理文件失败: %s", material.file_path, exc_info=True)
 
     log = OperationLog(
@@ -251,10 +256,12 @@ async def download_material_file(material_id: int, request: Request, db: Session
     app = db.query(Application).filter(Application.id == material.application_id).first()
     customer = db.query(Customer).filter(Customer.id == app.customer_id).first() if app else None
     check_customer_ownership(user, customer)
-    content = read_file(material.file_path)
-    if content is None:
+    # Stream from disk via FileResponse: a single download used to materialise the
+    # whole file (up to the 50MB cap) in memory as one bytes object
+    abs_path = full_path(material.file_path)
+    if abs_path is None:
         raise HTTPException(status_code=404, detail="文件不存在")
-    # PII 合规：材料下载留痕（下载成功后才记录）
+    # PII compliance: leave an audit trail for material downloads (recorded only after a successful download)
     detail = f"下载材料: {material.filename}, 客户: {customer.name if customer else ''}"
     log = OperationLog(
         user_id=user.get("user_id") or user.get("id"),
@@ -270,7 +277,7 @@ async def download_material_file(material_id: int, request: Request, db: Session
     filename_encoded = quote(material.filename.encode('utf-8'), safe='')
     # ASCII fallback for legacy clients
     ascii_name = material.filename.encode('ascii', 'replace').decode('ascii').replace('?', '_')
-    return Response(content=content, media_type="application/octet-stream",
+    return FileResponse(abs_path, media_type="application/octet-stream",
                     headers={
                         "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{filename_encoded}"
                     })
@@ -278,7 +285,7 @@ async def download_material_file(material_id: int, request: Request, db: Session
 
 @router.get("/browse")
 async def browse_files(application_id: int, request: Request, db: Session = Depends(get_db)):
-    """返回客户目录的完整文件树"""
+    """Return the full file tree of the customer directory."""
     user = await get_current_user(request)
     app = db.query(Application).filter(Application.id == application_id).first()
     if not app:
@@ -298,11 +305,14 @@ async def download_materials_zip(
     category: str = None,
     db: Session = Depends(get_db),
 ):
-    """批量下载某批次材料为 zip（可选按类别过滤）。
+    """Batch-download an application's materials as a zip (optionally filtered by category).
 
-    业务场景：客户或机构需要整套材料时，逐个下载极不方便。
-    实现说明：材料存放在 NAS，逐个读入内存后打包；限制单次总大小避免
-    一次性占用过多内存（超出时提示分批下载）。
+    Business context: downloading files one by one is highly inconvenient when
+    the customer or agency needs a complete set of materials.
+    Implementation note: materials are stored on the NAS and each is read into
+    memory before packing; the total size per request is capped to avoid
+    consuming too much memory at once (users are prompted to download in
+    batches when exceeded).
     """
     user = await get_current_user(request)
     app = db.query(Application).filter(Application.id == application_id).first()
@@ -318,47 +328,74 @@ async def download_materials_zip(
     if not materials:
         raise HTTPException(status_code=404, detail="该批次没有可下载的材料")
 
-    import io
+    import os
+    import shutil
+    import tempfile
     import zipfile
 
-    MAX_TOTAL_BYTES = 300 * 1024 * 1024  # 单次打包上限 300MB
+    MAX_TOTAL_BYTES = 300 * 1024 * 1024  # 300MB cap per packing request
 
-    buf = io.BytesIO()
     total = 0
     added = 0
     missing = []
-    # 只保留每个类别的最新版本（历史版本不打包，避免混淆）
+    # Keep only the latest version of each category (older versions are excluded to avoid confusion)
     latest: dict = {}
     for m in materials:
-        latest[(m.category, )] = m  # 因已按 version 升序，最后一条即最新
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for (cat, ), m in sorted(latest.items(), key=lambda x: x[0][0]):
-            content = read_file(m.file_path)
-            if content is None:
-                missing.append(m.filename)
-                continue
-            total += len(content)
-            if total > MAX_TOTAL_BYTES:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"材料总大小超过 {MAX_TOTAL_BYTES // 1024 // 1024}MB，请按类别分批下载",
-                )
-            # zip 内保留类别目录，便于解压后归类
-            arcname = f"{cat}/{m.filename}"
-            zf.writestr(arcname, content)
-            added += 1
+        latest[(m.category, )] = m  # already sorted by version ascending, so the last one is the latest
 
-        if missing:
-            zf.writestr("_缺失文件说明.txt",
-                        "以下材料在存储中不存在，可能已被移动或删除：\n" + "\n".join(missing))
+    # Stream to a temp file instead of BytesIO: packing up to 300MB of materials
+    # in memory once peaked at ~3 copies of the data (content + compressed buffer
+    # + buf.read()); with several concurrent requests this is exactly the
+    # "unexplained memory spike". Files are copied chunk-wise from disk, so peak
+    # memory is one chunk no matter the total size.
+    fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix="materials_")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_STORED) as zf:
+            # ZIP_STORED on purpose: the whitelist is pdf/docx/jpg/png — already
+            # compressed formats where DEFLATED burns CPU for ~0% size gain.
+            for (cat, ), m in sorted(latest.items(), key=lambda x: x[0][0]):
+                fobj = open_file(m.file_path)
+                if fobj is None:
+                    missing.append(m.filename)
+                    continue
+                with fobj:
+                    try:
+                        size = fobj.seek(0, 2)  # size without reading content into memory
+                        fobj.seek(0)
+                    except OSError:
+                        missing.append(m.filename)
+                        continue
+                    total += size
+                    if total > MAX_TOTAL_BYTES:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"材料总大小超过 {MAX_TOTAL_BYTES // 1024 // 1024}MB，请按类别分批下载",
+                        )
+                    # Keep category directories inside the zip for easy sorting after extraction
+                    arcname = f"{cat}/{m.filename}"
+                    # Stream via zf.open(w): zipfile.write() only accepts a path, and
+                    # writestr() would load the whole file — copyfileobj copies in
+                    # fixed-size chunks so memory stays flat
+                    with zf.open(arcname, "w") as dst:
+                        shutil.copyfileobj(fobj, dst, 1024 * 1024)
+                    added += 1
+
+            if missing:
+                zf.writestr("_缺失文件说明.txt",
+                            "以下材料在存储中不存在，可能已被移动或删除：\n" + "\n".join(missing))
+    except HTTPException:
+        os.remove(tmp_path)
+        raise
+    except Exception:
+        os.remove(tmp_path)
+        raise
 
     if added == 0:
+        os.remove(tmp_path)
         raise HTTPException(status_code=404, detail="材料文件均不存在于存储中")
 
-    buf.seek(0)
-    data = buf.read()
-
-    # 下载审计（材料含客户证件影像，必须留痕）
+    # Download audit (materials contain customer ID document images, must leave a trail)
     db.add(OperationLog(
         user_id=user.get("user_id") or user.get("id"),
         username=user.get("username", ""),
@@ -372,8 +409,9 @@ async def download_materials_zip(
     from urllib.parse import quote
     zip_name = f"{customer.name if customer else '客户'}_材料_{app.batch_number or application_id}.zip"
     encoded = quote(zip_name, safe="")
-    return Response(
-        content=data,
+    return FileResponse(
+        tmp_path,
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=\"materials.zip\"; filename*=UTF-8''{encoded}"},
+        background=BackgroundTask(os.remove, tmp_path),  # temp file removed after the response is sent
     )

@@ -1,12 +1,13 @@
 """
-跟进提醒与日程
+Follow-up reminders and schedule
 
-背景：跟进记录（FollowUp）已能记录 `next_follow_up_at`，但只在下一次跟进时
-发一条即时通知，业务员没有"今天该联系谁"的待办视图，容易漏跟。
+Background: follow-up records (FollowUp) already store `next_follow_up_at`, but an
+instant notification is only sent on the next follow-up; salesmen have no "who
+should I contact today" to-do view, so follow-ups get missed.
 
-这里提供：
-- 待跟进日程查询（今天/逾期/本周）
-- 逾期未跟进的自动提醒（由调度器定期触发）
+This module provides:
+- Pending follow-up schedule queries (today/overdue/this week)
+- Automatic reminders for overdue follow-ups (triggered periodically by the scheduler)
 """
 import logging
 from datetime import datetime, timedelta
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def _naive(dt: datetime | None) -> datetime | None:
-    """统一为 naive UTC，避免 aware/naive 比较报错"""
+    """Normalize to naive UTC to avoid aware/naive comparison errors"""
     if dt is None:
         return None
     return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
@@ -28,17 +29,18 @@ def get_pending_follow_ups(
     user: dict,
     scope: str = "today",
 ) -> dict[str, list[dict]]:
-    """查询待跟进日程。
+    """Query the pending follow-up schedule.
 
     scope:
-        today  —— 今天到期（含已逾期）
-        overdue —— 仅已逾期
-        week   —— 未来 7 天内
+        today   — due today (overdue included)
+        overdue — overdue only
+        week    — within the next 7 days
 
-    数据范围：业务员仅自己名下客户；admin/reviewer 可见全部。
+    Data scope: salesmen see only their own customers; admin/reviewer see all.
 
-    实现说明：`next_follow_up_at` 存在跟进记录上，同一客户可能有多条历史记录，
-    只有**最新一条**的 next_follow_up_at 才代表当前待办，因此按客户取最新记录。
+    Implementation note: `next_follow_up_at` lives on follow-up records and one
+    customer may have many historical records; only the **latest** record's
+    next_follow_up_at represents the current to-do, so take the latest record per customer.
     """
     from sqlalchemy import func
 
@@ -53,10 +55,10 @@ def get_pending_follow_ups(
     elif scope == "week":
         time_filter = (FollowUp.next_follow_up_at >= now,
                        FollowUp.next_follow_up_at < now + timedelta(days=7))
-    else:  # today：今天到期（含今天已过时点的，即 overdue 也算）
+    else:  # today: due today (including earlier today, i.e. overdue counts too)
         time_filter = (FollowUp.next_follow_up_at < today_end,)
 
-    # 每个客户取 id 最大的那条跟进记录（即最新）
+    # Take the follow-up record with the max id per customer (i.e. the latest)
     latest_subq = (
         db.query(
             FollowUp.customer_id.label("cid"),
@@ -77,7 +79,7 @@ def get_pending_follow_ups(
         )
     )
 
-    # 数据范围
+    # Data scope
     role = (user or {}).get("role")
     if role == "salesman":
         uid = (user or {}).get("user_id") or (user or {}).get("id")
@@ -111,7 +113,7 @@ def get_pending_follow_ups(
 
 
 def get_follow_up_summary(db, user: dict) -> dict:
-    """待跟进汇总（用于工作台卡片）"""
+    """Pending follow-up summary (for workbench cards)"""
     overdue = get_pending_follow_ups(db, user, "overdue")
     today = get_pending_follow_ups(db, user, "today")
     week = get_pending_follow_ups(db, user, "week")
@@ -123,9 +125,9 @@ def get_follow_up_summary(db, user: dict) -> dict:
 
 
 def send_overdue_follow_up_reminders(db) -> int:
-    """向业务员推送逾期跟进提醒（由调度器调用，同一客户每天只提醒一次）。
+    """Push overdue follow-up reminders to salesmen (called by the scheduler; at most one reminder per customer per day).
 
-    返回发送的提醒条数。
+    Returns the number of reminders sent.
     """
     from models import Customer, FollowUp, Notification
     from routers.notifications import create_notification
@@ -159,7 +161,7 @@ def send_overdue_follow_up_reminders(db) -> int:
     sent = 0
     for fu, customer in rows:
         salesman_id = customer.assigned_salesman_id
-        # 去重：今天已就该客户发过逾期提醒则跳过
+        # Dedup: skip if an overdue reminder for this customer was already sent today
         exists = db.query(Notification).filter(
             Notification.user_id == salesman_id,
             Notification.type == "follow_up_overdue",

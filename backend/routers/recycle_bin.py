@@ -1,9 +1,9 @@
 """
-回收站（仅管理员）
+Recycle bin (admin only)
 
-- 列出各资源的软删除记录（customer / application / user）
-- 恢复（is_deleted=False, deleted_at=None）
-- 彻底删除（物理删除，带关联约束校验）
+- List soft-deleted records of each resource (customer / application / user)
+- Restore (is_deleted=False, deleted_at=None)
+- Purge (physical delete, with referential constraint checks)
 """
 from datetime import datetime
 
@@ -84,7 +84,7 @@ def _user_item(u: User) -> dict:
     }
 
 
-# ---------- C1 列表 ----------
+# ---------- C1 List ----------
 
 @router.get("/")
 async def list_recycle_bin(
@@ -110,7 +110,7 @@ async def list_recycle_bin(
     return {"items": items, "total": len(items)}
 
 
-# ---------- C2 恢复 ----------
+# ---------- C2 Restore ----------
 
 @router.post("/restore")
 async def restore(
@@ -128,7 +128,7 @@ async def restore(
         ).first()
         if not obj:
             raise HTTPException(status_code=404, detail="记录不存在或未被删除")
-        # 身份证号唯一性校验（排除自身）
+        # ID number uniqueness check (excluding itself)
         dup = db.query(Customer).filter(
             Customer.id_number == obj.id_number,
             Customer.id != obj.id,
@@ -162,7 +162,7 @@ async def restore(
     return {"message": "已恢复"}
 
 
-# ---------- C3 彻底删除 ----------
+# ---------- C3 Purge ----------
 
 @router.delete("/purge/{resource_type}/{resource_id}")
 async def purge(
@@ -181,7 +181,7 @@ async def purge(
             raise HTTPException(status_code=404, detail="记录不存在")
         if db.query(Application).filter(Application.customer_id == obj.id).first():
             raise HTTPException(status_code=400, detail="请先彻底删除该客户名下的申报批次")
-        # 关联清理：跟进记录等
+        # Cleanup of related records: follow-ups etc.
         from models import FollowUp
         db.query(FollowUp).filter(FollowUp.customer_id == obj.id).delete(synchronize_session=False)
         _log(db, user, "彻底删除", "customer", obj.id,
@@ -196,7 +196,7 @@ async def purge(
             row[0] for row in db.query(Material.id).filter(
                 Material.application_id == obj.id).all()
         ]
-        # 先删关联，再删主体（Review 同时挂 material 与 application）
+        # Delete related rows first, then the entity (Review hangs off both material and application)
         db.query(Review).filter(Review.application_id == obj.id).delete(synchronize_session=False)
         if material_ids:
             db.query(Review).filter(Review.material_id.in_(material_ids)).delete(synchronize_session=False)

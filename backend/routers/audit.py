@@ -18,19 +18,19 @@ from schemas import OperationLogListResponse
 
 router = APIRouter(prefix="/api/audit", tags=["审计日志"])
 
-# 单次导出上限，超出部分截断并在表尾注明
+# Max rows per export; anything beyond is truncated and noted in the footer row
 EXPORT_MAX_ROWS = 10000
-# 单元格内 JSON 文本长度上限，避免 Excel 单元格过长
+# Max JSON text length per cell, to avoid overly long Excel cells
 EXPORT_CELL_MAX_LEN = 1000
 
 EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-# 流式读取临时文件的块大小
+# Chunk size for streaming the temp file
 STREAM_CHUNK_SIZE = 64 * 1024
-# 数据库流式游标每次预取的记录数
+# Number of records prefetched per step by the database streaming cursor
 YIELD_PER = 500
-# 固定列宽：write_only 模式无法在写完后遍历 ws.columns 计算
+# Fixed column widths: write_only mode cannot iterate ws.columns after writing to compute them
 EXPORT_COLUMN_WIDTHS = [8, 14, 28, 14, 10, 40, 40, 16, 30, 20]
-# 审计导出表头（write_only 模式需用 WriteOnlyCell 逐格设置样式）
+# Audit export headers (write_only mode requires per-cell styling via WriteOnlyCell)
 EXPORT_HEADERS = [
     "ID", "操作人", "操作类型", "资源类型", "资源ID",
     "变更前", "变更后", "IP地址", "User-Agent", "操作时间",
@@ -43,7 +43,7 @@ def _safe_remove(path):
 
 
 def _iter_file(path, chunk_size=STREAM_CHUNK_SIZE):
-    """分块读取临时文件，正常结束或客户端中途断开都在 finally 里删除临时文件。"""
+    """Read the temp file in chunks; the file is removed in finally whether the stream ends normally or the client disconnects."""
     try:
         with open(path, "rb") as f:
             while True:
@@ -63,7 +63,7 @@ def _build_log_query(
     start_date: datetime | None,
     end_date: datetime | None,
 ):
-    """按筛选条件构造审计日志查询（列表接口与导出接口共用，保证口径一致）。"""
+    """Build the audit log query from filter criteria (shared by list and export endpoints for consistent behavior)."""
     query = db.query(OperationLog)
 
     if action:
@@ -90,10 +90,11 @@ async def export_operation_logs(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """导出审计日志为 Excel（仅管理员，最多 10000 条）。
+    """Export audit logs to Excel (admin only, up to 10000 rows).
 
-    使用 openpyxl write_only 模式 + SQLAlchemy yield_per 流式游标，
-    避免一次性把全部日志读入内存；工作簿落盘到临时文件后分块返回。
+    Uses openpyxl write_only mode + SQLAlchemy yield_per streaming cursor
+    to avoid loading all logs into memory at once; the workbook is written to a
+    temp file and streamed back in chunks.
     """
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以导出审计日志")
@@ -104,7 +105,7 @@ async def export_operation_logs(
     from openpyxl.utils import get_column_letter
 
     query = _build_log_query(db, action, resource_type, username, start_date, end_date)
-    # 多取 1 行即可判断是否被截断，省掉一次 count 查询
+    # Fetch 1 extra row to detect truncation, saving a count query
     logs = (
         query.order_by(desc(OperationLog.created_at))
         .limit(EXPORT_MAX_ROWS + 1)
@@ -121,7 +122,7 @@ async def export_operation_logs(
         return text[:EXPORT_CELL_MAX_LEN]
 
     def _build(ws):
-        # write_only 模式：列宽须在写数据前设置，且不能用 ws[1] 遍历单元格
+        # write_only mode: column widths must be set before writing data, and ws[1] cannot be used to iterate cells
         for i, width in enumerate(EXPORT_COLUMN_WIDTHS, 1):
             ws.column_dimensions[get_column_letter(i)].width = width
 
@@ -169,7 +170,7 @@ async def export_operation_logs(
         _safe_remove(tmp_path)
         raise
 
-    # 导出审计日志本身也要留痕（审计数据外流同样需要可追溯）
+    # The audit log export itself must be logged (audit data leaving the system must also be traceable)
     try:
         db.add(OperationLog(
             user_id=current_user.get("user_id") or current_user.get("id"),
@@ -257,10 +258,11 @@ async def verify_audit_chain(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """校验审计日志哈希链完整性（仅管理员）。
+    """Verify audit log hash chain integrity (admin only).
 
-    用于检测日志是否被篡改或删除：任何一条被改动都会导致后续链断裂。
-    返回 broken_at 列出校验失败的日志 id，便于定位。
+    Detects whether logs were tampered with or deleted: any modification breaks
+    the rest of the chain. Returns broken_at listing the ids of logs that failed
+    verification, for easy locating.
     """
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以校验审计日志")
@@ -268,7 +270,7 @@ async def verify_audit_chain(
     from utils.audit_chain import verify_chain
     result = verify_chain(db, limit=limit)
     if not result["valid"]:
-        # 篡改是严重事件，落一条审计（这条本身也在链上，攻击者改不掉历史）
+        # Tampering is a serious event; write an audit record (this record is itself on the chain, so attackers cannot erase history)
         db.add(OperationLog(
             user_id=current_user.get("user_id") or current_user.get("id"),
             username=current_user.get("username", ""),
@@ -285,7 +287,7 @@ async def backfill_audit_chain(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """为历史日志补算哈希链（仅管理员，功能上线后一次性调用）。"""
+    """Backfill hash chains for historical logs (admin only; call once after the feature ships)."""
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="只有管理员可以操作")
 

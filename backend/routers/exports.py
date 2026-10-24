@@ -20,10 +20,11 @@ router = APIRouter(prefix="/api/exports", tags=["数据导出"])
 
 
 def _log_export(db, current_user: dict, action: str, detail: str = "") -> None:
-    """记录导出审计日志。
+    """Write an export audit log.
 
-    导出是全量资料外流的主要途径，必须留痕：谁、何时、导了什么、
-    是否脱敏。失败不影响导出本身（审计是附属能力）。
+    Exports are the primary channel for full data leaving the system, so they must be
+    traceable: who, when, what was exported, and whether masking was applied.
+    Failures do not affect the export itself (auditing is an auxiliary capability).
     """
     try:
         db.add(OperationLog(
@@ -38,20 +39,20 @@ def _log_export(db, current_user: dict, action: str, detail: str = "") -> None:
         db.rollback()
 
 EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-# 流式读取临时文件的块大小
+# Chunk size for streaming the temp file
 STREAM_CHUNK_SIZE = 64 * 1024
-# 单次导出行数上限，超出部分截断并在表尾注明
+# Max rows per export; anything beyond is truncated and noted in the footer row
 MAX_EXPORT_ROWS = 50000
-# 数据库流式游标每次预取的记录数
+# Number of records prefetched per step by the database streaming cursor
 YIELD_PER = 500
 
-# 列宽改为固定值：write_only 模式无法在写完后遍历 ws.columns 计算
+# Column widths are fixed values: write_only mode cannot iterate ws.columns after writing to compute them
 CUSTOMER_COLUMN_WIDTHS = [14, 22, 14, 12, 16, 10, 28, 16, 10, 20, 16, 18]
 APPLICATION_COLUMN_WIDTHS = [22, 14, 22, 16, 18, 18]
 
 
 def _set_column_widths(ws, widths):
-    """write_only 模式下必须在写数据前设置列宽。"""
+    """Column widths must be set before writing data in write_only mode."""
     for i, width in enumerate(widths, 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
 
@@ -62,7 +63,7 @@ def _safe_remove(path):
 
 
 def _iter_file(path, chunk_size=STREAM_CHUNK_SIZE):
-    """分块读取临时文件，正常结束或客户端中途断开都在 finally 里删除临时文件。"""
+    """Read the temp file in chunks; the file is removed in finally whether the stream ends normally or the client disconnects."""
     try:
         with open(path, "rb") as f:
             while True:
@@ -75,12 +76,13 @@ def _iter_file(path, chunk_size=STREAM_CHUNK_SIZE):
 
 
 def _stream_write_only_workbook(title, build_rows, disposition):
-    """把 write_only 工作簿落盘到临时文件后分块流式返回。
+    """Write the write_only workbook to a temp file, then stream it back in chunks.
 
-    build_rows(ws) 负责在 write_only worksheet 上逐行 append。
-    工作簿在返回响应前已完整写盘，因此流式阶段不再访问数据库会话。
-    临时文件由两重保障清理：生成器 finally + BackgroundTask 兜底
-    （防止响应对象未被消费时残留临时文件）。
+    build_rows(ws) is responsible for appending rows to the write_only worksheet.
+    The workbook is fully written to disk before the response is returned, so the
+    streaming phase no longer touches the database session. The temp file is cleaned
+    up with double protection: the generator's finally + a BackgroundTask fallback
+    (in case the response object is never consumed).
     """
     fd, tmp_path = tempfile.mkstemp(suffix=".xlsx", prefix="export_")
     os.close(fd)
@@ -103,7 +105,7 @@ def _stream_write_only_workbook(title, build_rows, disposition):
 
 @router.get("/template")
 async def download_excel_template(request: Request):
-    """下载 Excel 批量导入模板"""
+    """Download the Excel bulk import template"""
     user = await get_current_user(request)
     if user.get("role") not in ("admin", "salesman"):
         raise HTTPException(status_code=403, detail="仅业务员和管理员可下载模板")
@@ -118,7 +120,7 @@ async def download_excel_template(request: Request):
     ]
     ws.append(headers)
 
-    # 给表头加一点样式
+    # Style the header row
     from openpyxl.styles import Font, PatternFill
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -126,12 +128,12 @@ async def download_excel_template(request: Request):
         cell.font = header_font
         cell.fill = header_fill
 
-    # 设置列宽
+    # Set column widths
     widths = [14, 22, 14, 16, 14, 22, 14]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
 
-    # 添加一条示例数据（注释行）
+    # Add one sample row (comment row)
     ws.append(["张三", "110101199001011234", "13800138000", "本科", "中级工程师", "某某科技有限公司", "技术主管"])
 
     from urllib.parse import quote
@@ -194,7 +196,7 @@ async def export_customers(
 
         written = 0
         truncated = False
-        # 多取 1 行用于判断是否被截断；yield_per 走流式游标，不一次性载入内存
+        # Fetch 1 extra row to detect truncation; yield_per uses a streaming cursor instead of loading everything into memory
         rows = query.limit(MAX_EXPORT_ROWS + 1).yield_per(YIELD_PER)
         for customer, app in rows:
             if written >= MAX_EXPORT_ROWS:
@@ -222,7 +224,7 @@ async def export_customers(
     from urllib.parse import quote
     filename = quote(f"客户列表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
 
-    # 导出审计：导出的是全量客户资料（含证件号），必须留痕可追溯
+    # Export audit: full customer data (including ID numbers) is exported and must be traceable
     _log_export(
         db, current_user, "导出客户列表",
         detail=f"脱敏={'是' if mask else '否'}, 状态筛选={status or '全部'}, 关键词={keyword or '无'}",

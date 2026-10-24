@@ -1,21 +1,15 @@
 """
-统一的枚举和常量定义
+Unified enum and constant definitions
 
-本模块集中管理项目中所有枚举类型和常量，避免在 models.py 和 schemas.py 中重复定义。
+This module centrally manages all enum types and constants in the project, avoiding
+duplicate definitions in models.py and schemas.py.
 """
 
 from enum import Enum
 
 
-class UserRole(str, Enum):
-    """用户角色"""
-    ADMIN = "admin"
-    SALESMAN = "salesman"
-    REVIEWER = "reviewer"
-
-
 class ApplicationStatus(str, Enum):
-    """申报批次状态"""
+    """Application (batch) statuses"""
     INITIAL = "初次申报"
     SUPPLEMENT = "资料补充"
     COMPLETED = "完成资料"
@@ -27,7 +21,7 @@ class ApplicationStatus(str, Enum):
 
 
 class MaterialCategory(str, Enum):
-    """材料类别"""
+    """Material categories"""
     IDENTITY = "身份证明"
     EDUCATION = "学历学位"
     TITLE_CERT = "职称证书"
@@ -38,20 +32,20 @@ class MaterialCategory(str, Enum):
 
 
 class AuditStatus(str, Enum):
-    """材料审核状态"""
+    """Material review statuses"""
     PENDING = "待审核"
     PASSED = "已通过"
     FLAGGED = "已标记问题"
 
 
 class FeedbackType(str, Enum):
-    """机构反馈类型"""
+    """Agency feedback types"""
     APPROVED = "通过"
     REJECTED = "不通过"
     REVISE = "返修"
 
 
-# 状态转换规则：key=当前状态，value=允许的下一个状态列表
+# Status transition rules: key = current status, value = list of allowed next statuses
 VALID_TRANSITIONS = {
     ApplicationStatus.INITIAL: [ApplicationStatus.SUPPLEMENT, ApplicationStatus.COMPLETED],
     ApplicationStatus.SUPPLEMENT: [ApplicationStatus.COMPLETED],
@@ -60,16 +54,16 @@ VALID_TRANSITIONS = {
     ApplicationStatus.REVISE: [ApplicationStatus.SUPPLEMENT, ApplicationStatus.COMPLETED],
     ApplicationStatus.REJECTED: [ApplicationStatus.REAPPLY],
     ApplicationStatus.REAPPLY: [ApplicationStatus.SUPPLEMENT, ApplicationStatus.COMPLETED],
-    ApplicationStatus.APPROVED: [],  # 终态
+    ApplicationStatus.APPROVED: [],  # terminal state
 }
 
-# 文件上传配置（materials / reviews / feedback 统一从enums导入）
+# File upload config (materials / reviews / feedback all import from enums)
 ALLOWED_FILE_EXTENSIONS = {".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png"}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 
 class PaymentStatus(str, Enum):
-    """收费/回款状态"""
+    """Payment/receivable statuses"""
     UNPAID = "未收费"
     PARTIAL = "部分收费"
     PAID = "已结清"
@@ -77,14 +71,14 @@ class PaymentStatus(str, Enum):
 
 
 class CertificateStatus(str, Enum):
-    """证书发放状态"""
+    """Certificate issuance statuses"""
     NOT_ISSUED = "未发证"
     ISSUED = "已发证"
     DELIVERED = "已交付"
 
 
 class CustomerSource(str, Enum):
-    """客户来源渠道"""
+    """Customer source channels"""
     REFERRAL = "老客户转介绍"
     ONLINE = "网络渠道"
     OFFLINE = "线下推广"
@@ -93,15 +87,15 @@ class CustomerSource(str, Enum):
     OTHER = "其他"
 
 
-# ---------- 申报材料清单（按专业类别要求，提交评审机构前校验） ----------
-# 通用必传材料：所有申报都必须具备
+# ---------- Required application materials (per professional category, validated before submitting to the review agency) ----------
+# Common required materials: every application must have them
 REQUIRED_MATERIALS_COMMON = [
     MaterialCategory.IDENTITY.value,
     MaterialCategory.EDUCATION.value,
     MaterialCategory.EMPLOYMENT_CONTRACT.value,
 ]
 
-# 按专业类别追加的必传材料（key 为专业类别关键词，命中即要求）
+# Extra required materials per professional category (key is a category keyword; a match adds the requirement)
 REQUIRED_MATERIALS_BY_CATEGORY = {
     "工程": [MaterialCategory.TITLE_CERT.value, MaterialCategory.ACHIEVEMENTS.value],
     "建筑": [MaterialCategory.TITLE_CERT.value, MaterialCategory.ACHIEVEMENTS.value],
@@ -119,7 +113,7 @@ REQUIRED_MATERIALS_BY_CATEGORY = {
 
 
 def required_materials_for(professional_category: str = "") -> list[str]:
-    """返回某专业类别申报所需的必传材料类别列表（去重、保持稳定顺序）"""
+    """Return the list of required material categories for an application in a given professional category (deduplicated, stable order)"""
     required = list(REQUIRED_MATERIALS_COMMON)
     cat = professional_category or ""
     for keyword, extra in REQUIRED_MATERIALS_BY_CATEGORY.items():
@@ -130,16 +124,16 @@ def required_materials_for(professional_category: str = "") -> list[str]:
     return required
 
 
-# ---------- 系统参数默认值（可由 SystemConfig 表覆盖，管理员在线调整） ----------
+# ---------- System config defaults (overridable via the SystemConfig table, adjustable online by admins) ----------
 DEFAULT_SYSTEM_CONFIG = {
-    "pool_claim_limit": 50,            # 单个业务员可持有的客户上限
-    "pool_recovery_days": 7,           # 无跟进自动回收天数
-    "sla_hours_after_assign": 24,      # 分配后 SLA 小时数
-    "sla_hours_before_review": 48,     # 待审核 SLA 小时数
-    "max_file_size_mb": 50,            # 单文件大小上限(MB)
-    "login_lockout_threshold": 10,     # 连续登录失败锁定阈值
-    "login_lockout_minutes": 15,       # 锁定时长(分钟)
-    "reject_duplicate_phone": 0,       # 是否拒绝重复手机号(1/0)
+    "pool_claim_limit": 50,            # max customers a single salesman can hold
+    "pool_recovery_days": 7,           # days without follow-up before auto-reclaim
+    "sla_hours_after_assign": 24,      # SLA hours after assignment
+    "sla_hours_before_review": 48,     # SLA hours while pending review
+    "max_file_size_mb": 50,            # per-file size limit (MB)
+    "login_lockout_threshold": 10,     # consecutive login failures before lockout
+    "login_lockout_minutes": 15,       # lockout duration (minutes)
+    "reject_duplicate_phone": 0,       # whether to reject duplicate phone numbers (1/0)
 }
 
 SYSTEM_CONFIG_LABELS = {

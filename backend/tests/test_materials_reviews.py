@@ -1,6 +1,7 @@
-"""材料管理与审核流程测试
+"""Material management and review flow tests
 
-覆盖：上传校验（扩展名/大小/内容魔数）、版本号、审核权限与状态联动。
+Covers: upload validation (extension/size/content magic bytes), versioning,
+review permissions, and status interlock.
 """
 import io
 
@@ -17,7 +18,7 @@ HTML_BYTES = b"<html><body><script>alert(1)</script></body></html>"
 
 @pytest.fixture(name="owner_app")
 def fixture_owner_app(db, test_salesman):
-    """业务员名下的客户 + 批次"""
+    """Customer + application owned by the salesman"""
     c = models.Customer(name="材料客户", id_number=VALID_ID, phone="13800138001",
                         assigned_salesman_id=test_salesman.id, name_pinyin="CLKH")
     db.add(c)
@@ -57,7 +58,7 @@ class TestUploadValidation:
         assert "不支持的文件类型" in r.json()["detail"]
 
     def test_fake_pdf_rejected_by_magic_bytes(self, client, db, test_salesman, owner_app):
-        """改扩展名伪装的文件必须被内容校验拦住"""
+        """Files disguised by extension swap must be caught by content validation"""
         _login(client, "testsalesman", "salespassword")
         _, app = owner_app
         r = _upload(client, app.id, "身份证明", "fake.pdf", HTML_BYTES)
@@ -107,7 +108,7 @@ class TestMaterialVersioning:
 
 class TestMaterialAuditStatus:
     def test_salesman_cannot_change_audit_status(self, client, db, test_salesman, owner_app):
-        """业务员不能自己把材料标为已通过（关键越权）"""
+        """A salesman cannot mark their own material as passed (critical privilege escalation)"""
         _login(client, "testsalesman", "salespassword")
         _, app = owner_app
         mid = _upload(client, app.id, "身份证明", "a.pdf", PDF_BYTES).json()["id"]
@@ -148,7 +149,7 @@ class TestMaterialAuditStatus:
 
 class TestReviewCreation:
     def test_salesman_cannot_review(self, client, db, test_salesman, owner_app):
-        """业务员不能审核自己客户的材料（关键越权）"""
+        """A salesman cannot review their own customer's materials (critical privilege escalation)"""
         _login(client, "testsalesman", "salespassword")
         _, app = owner_app
         mid = _upload(client, app.id, "身份证明", "a.pdf", PDF_BYTES).json()["id"]
@@ -183,7 +184,7 @@ class TestReviewCreation:
 
 class TestFeedbackStateMachine:
     def test_feedback_requires_reviewer_role(self, client, db, test_salesman, owner_app):
-        """业务员不能录入机构反馈（否则可自行让批次通过）"""
+        """A salesman cannot enter institution feedback (otherwise they could pass the application themselves)"""
         _login(client, "testsalesman", "salespassword")
         _, app = owner_app
         r = client.post("/api/feedback/", data={
@@ -192,9 +193,9 @@ class TestFeedbackStateMachine:
         assert r.status_code == 403
 
     def test_feedback_requires_correct_status(self, client, db, test_reviewer, owner_app):
-        """只有"提交评审机构审核"状态才能录入机构反馈"""
+        """Institution feedback can only be entered in the submitted-for-institution-review status"""
         _login(client, "testreviewer", "reviewpassword")
-        _, app = owner_app  # 状态为 初次申报
+        _, app = owner_app  # status is the initial-application status
         r = client.post("/api/feedback/", data={
             "application_id": app.id, "feedback_type": "通过", "content": "x",
         })

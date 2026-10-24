@@ -152,7 +152,7 @@ async function deactivateToken(id: number) {
     ElMessage.success('链接已停用')
     loadTokens()
   } catch {
-    // 用户取消确认属正常流程；接口失败由 api 拦截器统一提示
+    // User cancelling the confirmation is a normal flow; API failures are reported by the api interceptor
   }
 }
 
@@ -172,7 +172,7 @@ async function deleteToken(id: number) {
     ElMessage.success('链接已删除')
     loadTokens()
   } catch {
-    // 用户取消确认属正常流程；接口失败由 api 拦截器统一提示
+    // User cancelling the confirmation is a normal flow; API failures are reported by the api interceptor
   }
 }
 

@@ -1,23 +1,25 @@
 """
-敏感字段脱敏
+Sensitive field masking
 
-背景：客户资料含身份证号、手机号，属于个人敏感信息（PII）。业务场景中
-经常需要把名单发给合作方/机构，但**不需要**完整证件号 —— 明文外发既无必要
-也放大泄露风险。
+Background: customer profiles contain ID numbers and phone numbers — personal
+sensitive information (PII). Business scenarios often require sending rosters to
+partners/agencies, but the **full** ID number is not needed — sending it in plain
+text is both unnecessary and amplifies leak risk.
 
-脱敏规则（保持可辨识、不可还原）：
-    身份证 110101198501011239 → 110101********1239（保留前 6 位地区 + 后 4 位）
-    手机号  13800138001        → 138****8001
-    姓名    陈明辉              → 陈**（保留姓氏）
-    邮箱    zhangsan@a.com     → zh***@a.com
+Masking rules (recognizable, but not reversible):
+    ID number  110101198501011239 -> 110101********1239 (keep first 6 region digits + last 4)
+    Phone      13800138001        -> 138****8001
+    Name       Chen Minghui       -> Chen** (keep surname)
+    Email      zhangsan@a.com     -> zh***@a.com
 """
 
 
 def mask_id_number(value: str | None) -> str:
-    """身份证号脱敏：保留前 6 位与后 4 位。
+    """Mask an ID number: keep the first 6 and last 4 digits.
 
-    前 6 位是地区码（便于核对归属），后 4 位便于人工比对，中间出生日期打码。
-    15 位老式号码按前 6 后 3 处理。
+    The first 6 digits are the region code (handy for verifying ownership) and the
+    last 4 aid manual comparison; the birth date in the middle is masked.
+    Legacy 15-digit numbers keep the first 6 and last 3.
     """
     if not value:
         return ""
@@ -32,7 +34,7 @@ def mask_id_number(value: str | None) -> str:
 
 
 def mask_phone(value: str | None) -> str:
-    """手机号脱敏：保留前 3 后 4（138****8001）"""
+    """Mask a phone number: keep the first 3 and last 4 digits (138****8001)"""
     if not value:
         return ""
     v = value.strip()
@@ -43,49 +45,21 @@ def mask_phone(value: str | None) -> str:
     return "*" * len(v)
 
 
-def mask_name(value: str | None) -> str:
-    """姓名脱敏：保留姓氏（陈明辉 → 陈**）"""
-    if not value:
-        return ""
-    v = value.strip()
-    if len(v) <= 1:
-        return v
-    return v[0] + "*" * (len(v) - 1)
+# ---------- Role-based field-level masking ----------
 
-
-def mask_email(value: str | None) -> str:
-    """邮箱脱敏：保留首字符与域名（zhangsan@a.com → z***@a.com）"""
-    if not value or "@" not in value:
-        return value or ""
-    local, _, domain = value.partition("@")
-    if not local:
-        return value
-    return f"{local[0]}***@{domain}"
-
-
-def mask_id_number_keep_tail4(value: str | None) -> str:
-    """仅保留身份证后 4 位（用于"已存在"类提示，不暴露地区与生日）"""
-    if not value:
-        return ""
-    v = value.strip()
-    return f"****{v[-4:]}" if len(v) >= 4 else "****"
-
-
-# ---------- 按角色的字段级脱敏 ----------
-
-# 这些角色可以看到完整证件号/手机号（前提是数据归属允许）
+# Roles allowed to see full ID numbers/phone numbers (provided data ownership permits)
 FULL_ACCESS_ROLES = {"admin"}
 
-# 客户归属校验：业务员看自己名下客户时可看完整信息（日常核对需要），
-# 看他人客户时脱敏；审核员需要核对材料与证件是否一致，但不需要完整号码。
+# Ownership check: a salesman may see full info for their own customers (daily
+# verification); masked for others' customers; reviewers compare materials vs IDs but need no full numbers.
 def should_mask_customer(user: dict, customer) -> bool:
-    """判断当前用户查看该客户时是否应脱敏。
+    """Decide whether to mask this customer for the current user.
 
-    规则：
-    - admin：始终完整（管理职责）
-    - salesman：仅自己名下客户完整（日常核对需要），他人客户脱敏
-    - reviewer：一律脱敏（审核材料不需要完整证件号）
-    - 其他/未登录：脱敏
+    Rules:
+    - admin: always full (management duty)
+    - salesman: full only for their own customers (daily verification), masked for others'
+    - reviewer: always masked (reviewing materials does not need full ID numbers)
+    - other/unauthenticated: masked
     """
     role = (user or {}).get("role")
     if role in FULL_ACCESS_ROLES:
@@ -98,9 +72,10 @@ def should_mask_customer(user: dict, customer) -> bool:
 
 
 def apply_customer_masking(data: dict, user: dict, customer) -> dict:
-    """按角色对客户字典中的敏感字段脱敏（原地修改并返回）。
+    """Mask sensitive fields in a customer dict by role (modifies in place and returns).
 
-    脱敏字段：身份证号、手机号。其余字段（学历、单位等）不属于高敏感信息，保留。
+    Masked fields: ID number, phone number. Other fields (education, employer, etc.)
+    are not highly sensitive and are kept.
     """
     if not should_mask_customer(user, customer):
         return data

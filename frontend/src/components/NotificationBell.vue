@@ -165,20 +165,20 @@ async function clearRead() {
 }
 
 /**
- * 通知类型 → 图标组件。
+ * Notification type → icon component.
  *
- * 此前这里返回的是 CSS 类名（'el-icon--warning' 等）并绑到 <el-icon> 上，但
- * <el-icon> 内部没有任何子组件 —— 结果每种通知左侧都是一个空白占位，
- * 而类型信息（用颜色区分）也随之失效。现在改为真正渲染图标。
+ * This used to return CSS class names ('el-icon--warning' etc.) bound onto <el-icon>, but
+ * <el-icon> had no child component inside — so every notification showed an empty placeholder
+ * on the left, and the color-based type information was lost too. Now real icons are rendered.
  */
 const TYPE_ICONS: Record<string, Component> = {
-  // 跟进 / SLA
+  // Follow-up / SLA
   follow_up_reminder: Clock,
   follow_up_overdue: AlarmClock,
   sla_overdue: WarningFilled,
   sla_warning: Warning,
   review_sla_overdue: WarningFilled,
-  // 客户 / 公海 / 批次
+  // Customer / public pool / batch
   customer: User,
   pool_claim: UserFilled,
   pool_recovery: RefreshLeft,
@@ -186,10 +186,10 @@ const TYPE_ICONS: Record<string, Component> = {
   batch_release: Document,
   batch_review: DocumentChecked,
   batch_remind: Bell,
-  // 材料 / 审核
+  // Material / review
   material: Folder,
   review: DocumentChecked,
-  // 系统 / 安全 / 备份
+  // System / security / backup
   backup: Download,
   backup_failed: WarningFilled,
   security_alert: WarningFilled,
@@ -197,18 +197,18 @@ const TYPE_ICONS: Record<string, Component> = {
   audit: Document,
   system_config: Setting,
   system: InfoFilled,
-  // 其余（application / export / phone / solid 等）
+  // The rest (application / export / phone / solid, etc.)
   application: Document,
   export: Download,
   phone: Phone,
 }
 
-/** 无专属图标时统一用 InfoFilled，避免出现空白占位 */
+/** Falls back to InfoFilled when there is no dedicated icon, avoiding an empty placeholder */
 function getTypeIcon(type: string): Component {
   return TYPE_ICONS[type] || InfoFilled
 }
 
-/** 仅保留颜色语义；图标本身由 getTypeIcon 渲染 */
+/** Keeps only the color semantics; the icon itself is rendered by getTypeIcon */
 function getTypeIconClass(type: string): string {
   const map: Record<string, string> = {
     follow_up_overdue: 'is-danger',

@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 /**
- * 确保前端构建产物是最新的。
+ * Ensure the frontend build output is up to date.
  *
- * 背景：frontend/dist 不再纳入版本控制（每次构建文件名带 hash，提交它只会产生
- * 大量无意义 diff）。但 start.bat / start.sh 依赖 dist 存在才能提供界面 ——
- * 因此启动脚本必须能自己把前端建出来，否则新克隆的仓库打开只有 404。
+ * Background: frontend/dist is no longer version-controlled (every build emits hashed file
+ * names, so committing it only produces piles of meaningless diffs). But start.bat /
+ * start.sh depend on dist existing to serve the UI — so the startup scripts must be able to
+ * build the frontend themselves, or a freshly cloned repo opens to nothing but 404.
  *
- * 逻辑：
- *   - dist/index.html 不存在 → 构建
- *   - node_modules 不存在   → 先 npm install 再构建
- *   - src/ 下有文件比 dist/index.html 新 → 重新构建
- *   - 否则跳过（避免每次启动都等一次构建）
+ * Logic:
+ *   - dist/index.html does not exist → build
+ *   - node_modules does not exist    → npm install first, then build
+ *   - a file under src/ is newer than dist/index.html → rebuild
+ *   - otherwise skip (avoid waiting for a build on every startup)
  *
- * 退出码：0 = 可用；1 = 构建失败（调用方应中止启动）
+ * Exit codes: 0 = usable; 1 = build failed (the caller should abort startup)
  */
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -25,7 +26,7 @@ const distIndex = join(frontendDir, "dist", "index.html");
 const srcDir = join(frontendDir, "src");
 const nodeModules = join(frontendDir, "node_modules");
 
-/** 递归取目录下最新文件的 mtime，用于判断源码是否比构建产物新 */
+/** Recursively find the newest file mtime under a directory, used to check whether sources are newer than the build output */
 function newestMtime(dir) {
   let newest = 0;
   const walk = (current) => {
@@ -44,7 +45,7 @@ function newestMtime(dir) {
           const t = statSync(full).mtimeMs;
           if (t > newest) newest = t;
         } catch {
-          /* 读取失败的文件忽略即可，不影响构建判断 */
+          /* files that fail to stat can simply be ignored; they do not affect the build decision */
         }
       }
     }
@@ -83,7 +84,7 @@ function main() {
     }
     const distTime = statSync(distIndex).mtimeMs;
     const srcTime = newestMtime(srcDir);
-    // 配置文件改动同样应触发重建
+    // Config file changes should also trigger a rebuild
     const configTime = Math.max(
       ...[
         "vite.config.ts",

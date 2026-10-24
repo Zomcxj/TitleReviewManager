@@ -85,7 +85,7 @@ const revokingId = ref<string | null>(null)
 
 const otherSessions = computed(() => sessions.value.filter((s) => !s.is_current))
 
-// 后端返回不带时区的 ISO 字符串，直接 new Date(str) 解析后手动格式化
+// Backend returns timezone-less ISO strings; parse with new Date(str) then format manually
 function formatTime(value: string): string {
   if (!value) return '—'
   const d = new Date(value)

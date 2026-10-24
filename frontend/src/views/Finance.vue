@@ -144,7 +144,7 @@
       </el-table>
     </el-card>
 
-    <!-- 登记回款 -->
+    <!-- Register payment received -->
     <el-dialog v-model="paymentDialogVisible" title="登记回款" width="460px">
       <el-form :model="paymentForm" label-position="top">
         <el-form-item label="批次号">
@@ -183,7 +183,7 @@
       </template>
     </el-dialog>
 
-    <!-- 编辑收费信息 -->
+    <!-- Edit fee information -->
     <el-dialog v-model="editDialogVisible" title="编辑收费信息" width="620px">
       <el-form :model="editForm" label-position="top">
         <el-divider content-position="left">合同与收费</el-divider>
@@ -403,7 +403,7 @@ async function loadPending() {
     const { data } = await api.get('/api/finance/pending')
     const rows: PendingRow[] = (data || []).map((row: PendingRow) => ({ ...row, payment_records: [] }))
     pendingList.value = rows
-    // 并行拉取每个批次的回款明细，供展开行展示
+    // Fetch payment records for each batch in parallel to display in the expanded row
     await Promise.all(rows.map(async (row) => {
       try {
         const res = await api.get(`/api/finance/application/${row.application_id}`)

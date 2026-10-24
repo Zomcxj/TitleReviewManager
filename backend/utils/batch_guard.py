@@ -1,15 +1,16 @@
 """
-批量操作防护
+Batch operation guards
 
-风险：批量接口（批量转让/提交/催办/分配/释放）在循环里逐个处理并**发送通知**。
-不设上限时，一次请求传上万个 ID 会：
-1. 产生上万条通知（通知表膨胀、相关用户被轰炸）
-2. 长时间占用数据库连接与事务（其他请求排队）
-3. 被恶意利用做资源消耗
+Risk: batch endpoints (batch transfer/submit/reminder/assign/release) process items
+in a loop and **send notifications**. Without limits, a single request carrying tens
+of thousands of IDs would:
+1. Generate tens of thousands of notifications (notification table bloat, users bombarded)
+2. Hold database connections and transactions for a long time (other requests queue up)
+3. Be abused for resource exhaustion
 
-因此对批量操作做两层限制：
-- 单次条数上限（默认 200）
-- 单位时间内调用次数上限（默认每用户 10 分钟 20 次）
+Hence two layers of limits on batch operations:
+- Max items per request (default 200)
+- Max calls per time window (default 20 calls per 10 minutes per user)
 """
 import logging
 from datetime import timedelta
@@ -18,24 +19,24 @@ from utils.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
-# 单次批量操作的最大条数
+# Max items per batch operation
 MAX_BATCH_SIZE = 200
-# 频率限制：每用户每窗口最多调用次数
+# Rate limiting: max calls per user per window
 BATCH_RATE_WINDOW_MINUTES = 10
 BATCH_RATE_MAX_CALLS = 20
 
 
 def validate_batch_ids(ids: list[int] | None, field_name: str = "IDs") -> list[int]:
-    """校验批量操作的 ID 列表：非空、去重、不超上限。
+    """Validate the ID list for a batch operation: non-empty, deduplicated, within the cap.
 
-    返回去重后的列表；不合法时抛 HTTPException。
+    Returns the deduplicated list; raises HTTPException when invalid.
     """
     from fastapi import HTTPException
 
     if not ids:
         raise HTTPException(status_code=400, detail="请至少选择一条记录")
 
-    # 去重但保持顺序（重复 ID 会造成重复处理与重复通知）
+    # Deduplicate while preserving order (duplicate IDs cause duplicate processing and notifications)
     seen = set()
     unique = []
     for i in ids:
@@ -52,9 +53,10 @@ def validate_batch_ids(ids: list[int] | None, field_name: str = "IDs") -> list[i
 
 
 def check_batch_rate_limit(db, user: dict, action: str) -> None:
-    """批量操作频率限制（复用 login_attempts 表，scope 区分）。
+    """Rate limit for batch operations (reuses the login_attempts table, distinguished by scope).
 
-    防止脚本化高频调用批量接口刷通知或压数据库。
+    Prevents scripted high-frequency batch calls from spamming notifications or
+    overwhelming the database.
     """
     from fastapi import HTTPException
 

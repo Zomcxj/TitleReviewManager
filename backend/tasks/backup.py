@@ -1,48 +1,52 @@
 #!/usr/bin/env python3
 """
-数据自动备份（数据库 + 材料文件）
+Automatic data backup (database + material files)
 
-背景：平台同时保存业务数据（SQLite / PostgreSQL）和材料原文件（本地目录或挂载的
-NAS）。此前没有任何自动备份，一旦磁盘损坏或误删，业务数据与客户材料无法恢复。
-本模块提供一次完整的备份能力，可被三种方式触发：
-1) 内置调度器（utils/scheduler.py）每天固定小时自动执行
-2) 管理端 API（routers/backup.py）手动触发
-3) 外部 cron 直接执行 `python tasks/backup.py`
+Background: the platform stores both business data (SQLite / PostgreSQL) and the
+original material files (local directory or mounted NAS). There was no automatic
+backup at all; a damaged disk or accidental deletion meant business data and
+customer materials were unrecoverable. This module provides one complete backup
+capability, triggered in three ways:
+1) The built-in scheduler (utils/scheduler.py) runs it automatically at a fixed hour each day
+2) The admin API (routers/backup.py) triggers it manually
+3) External cron runs `python tasks/backup.py` directly
 
-设计要点
-- 数据库必须"一致性"备份：SQLite 用官方 backup API（直接复制写入中的文件会得到
-  损坏的库）；PostgreSQL 用 pg_dump。
-- 材料文件用标准库 tarfile 打包，不引入新依赖。
-- 任何异常只记日志并写入结果摘要，绝不向上抛出（备份失败不能影响业务）。
-- 保留最近 BACKUP_KEEP 份，超出自动清理最旧的（连同 manifest）。
-- 每份备份在同一目录写一个 manifest_<timestamp>.json，记录备份元信息，便于
-  恢复时核对与界面展示。
+Design notes
+- The database must be backed up "consistently": SQLite uses the official backup API
+  (directly copying a file being written to yields a corrupt database); PostgreSQL uses pg_dump.
+- Material files are packed with the stdlib tarfile; no new dependencies.
+- Any exception is only logged and written into the result summary, never raised
+  (a backup failure must not affect the business).
+- Keeps the most recent BACKUP_KEEP copies; older ones (and their manifests) are cleaned up.
+- Each backup writes a manifest_<timestamp>.json into the same directory with backup
+  metadata, for verification during restore and for the UI.
 
-环境变量（均有合理默认）
-- BACKUP_ENABLED      默认 1，是否启用自动备份
-- BACKUP_DIR          默认 backend/backups
-- BACKUP_KEEP         默认 7，保留份数
-- BACKUP_HOUR         默认 3，每天几点执行（调度器按小时判断）
-- BACKUP_INCLUDE_FILES 默认 1，是否同时打包材料文件
-- BACKUP_COMPRESS     默认 1，是否 gzip 压缩数据库备份
+Environment variables (all have sane defaults)
+- BACKUP_ENABLED      default 1, whether automatic backup is enabled
+- BACKUP_DIR          default backend/backups
+- BACKUP_KEEP         default 7, copies to keep
+- BACKUP_HOUR         default 3, hour of day to run (the scheduler checks by hour)
+- BACKUP_INCLUDE_FILES default 1, whether to also pack material files
+- BACKUP_COMPRESS     default 1, whether to gzip the database backup
 
-备份产物（同一目录）
-- db_<timestamp>.sqlite.gz 或 db_<timestamp>.sql      数据库备份
-- files_<timestamp>.tar.gz                            材料文件打包（可选）
-- manifest_<timestamp>.json                           备份元信息
+Backup artifacts (same directory)
+- db_<timestamp>.sqlite.gz or db_<timestamp>.sql      database backup
+- files_<timestamp>.tar.gz                            packed material files (optional)
+- manifest_<timestamp>.json                           backup metadata
 
-恢复步骤（详见 .env.example 注释）
-1. 停掉后端服务（避免恢复过程中仍有写入）。
-2. SQLite：
-   - 解压 `gzip -dk db_<ts>.sqlite.gz` 得到 db_<ts>.sqlite
-   - 用解压出的文件替换 DATABASE_URL 指向的库文件（先备份现有文件）
-3. PostgreSQL：
-   - 解压 `gzip -dk db_<ts>.sql.gz`
-   - `psql -U <user> -d <db> -f db_<ts>.sql`（建议先建空库）
-4. 材料文件：
-   - 在 storage.get_storage_root() 指向的目录内解包
+Restore steps (see the .env.example comments for details)
+1. Stop the backend (avoid writes during the restore).
+2. SQLite:
+   - Extract `gzip -dk db_<ts>.sqlite.gz` to get db_<ts>.sqlite
+   - Replace the database file pointed to by DATABASE_URL with the extracted file
+     (back up the existing file first)
+3. PostgreSQL:
+   - Extract `gzip -dk db_<ts>.sql.gz`
+   - `psql -U <user> -d <db> -f db_<ts>.sql` (create an empty database first, recommended)
+4. Material files:
+   - Unpack inside the directory pointed to by storage.get_storage_root():
      `tar -xzf files_<ts>.tar.gz -C <storage_root>`
-5. 重启服务，核对 manifest_<ts>.json 中的记录（大小/数量/是否成功）。
+5. Restart the service and verify the records in manifest_<ts>.json (sizes/counts/success).
 """
 import gzip
 import json
@@ -59,22 +63,22 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# backend/ 目录（本文件位于 backend/tasks/）
+# backend/ directory (this file lives in backend/tasks/)
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BACKUP_DIR = os.path.join(BACKEND_DIR, "backups")
 
-# 时间戳格式：文件名与 manifest 分组都依赖它，保持唯一且可排序
+# Timestamp format: both filenames and manifest grouping depend on it; keep it unique and sortable
 TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
-# 备份文件名 -> 时间戳（db_20260918_020000.sqlite.gz / files_... / manifest_...）
+# Backup filename -> timestamp (db_20260918_020000.sqlite.gz / files_... / manifest_...)
 _TS_RE = re.compile(r"^(?:db|files|manifest)_(\d{8}_\d{6})\.")
 
-# 标记文件：记录最近一次备份尝试的日期，避免同一小时内重复备份
+# Marker file: records the date of the most recent backup attempt, avoiding duplicate backups within the same hour
 _MARKER_NAME = "_last_backup.marker"
 
 
-# ---------------------------------------------------------------- 配置读取
+# ---------------------------------------------------------------- config reading
 def _env_flag(name: str, default: bool = True) -> bool:
-    """读取布尔型环境变量（1/true/yes/on 视为真）"""
+    """Read a boolean env var (1/true/yes/on are truthy)"""
     raw = os.getenv(name)
     if raw is None or raw == "":
         return default
@@ -82,7 +86,7 @@ def _env_flag(name: str, default: bool = True) -> bool:
 
 
 def _env_int(name: str, default: int) -> int:
-    """读取整型环境变量，非法值回落默认值"""
+    """Read an integer env var, falling back to the default on invalid values"""
     raw = os.getenv(name)
     if raw is None or str(raw).strip() == "":
         return default
@@ -94,45 +98,45 @@ def _env_int(name: str, default: int) -> int:
 
 
 def get_backup_dir() -> str:
-    """备份目录（BACKUP_DIR，默认 backend/backups）"""
+    """Backup directory (BACKUP_DIR, default backend/backups)"""
     return os.getenv("BACKUP_DIR") or DEFAULT_BACKUP_DIR
 
 
-# 备份成功后推送副本的命令（BACKUP_SYNC_CMD，默认空 = 关闭）。
-# 模板中的 {backup_dir} 替换为本次备份目录；例：
+# Command to push an offsite copy after a successful backup (BACKUP_SYNC_CMD, empty by default = disabled).
+# {backup_dir} in the template is replaced with this backup's directory; example:
 #   rsync -a --delete {backup_dir}/ /mnt/disk2/trm-backups/
-# 超时秒数（BACKUP_SYNC_TIMEOUT），防止挂死的同步命令拖住调度线程
+# Timeout in seconds (BACKUP_SYNC_TIMEOUT), so a hung sync command cannot stall the scheduler thread
 SYNC_TIMEOUT_SECONDS = _env_int("BACKUP_SYNC_TIMEOUT", 600)
 
 
 def is_enabled() -> bool:
-    """自动备份是否启用（BACKUP_ENABLED，默认 1）"""
+    """Whether automatic backup is enabled (BACKUP_ENABLED, default 1)"""
     return _env_flag("BACKUP_ENABLED", True)
 
 
 def get_keep() -> int:
-    """保留份数（BACKUP_KEEP，默认 7；<1 时按 1 处理）"""
+    """Copies to keep (BACKUP_KEEP, default 7; values <1 are treated as 1)"""
     return max(_env_int("BACKUP_KEEP", 7), 1)
 
 
 def get_hour() -> int:
-    """每日执行小时（BACKUP_HOUR，默认 3），非法值回落 3"""
+    """Hour of day to run (BACKUP_HOUR, default 3); invalid values fall back to 3"""
     hour = _env_int("BACKUP_HOUR", 3)
     return hour if 0 <= hour <= 23 else 3
 
 
 def include_files_enabled() -> bool:
-    """是否同时打包材料文件（BACKUP_INCLUDE_FILES，默认 1）"""
+    """Whether to also pack material files (BACKUP_INCLUDE_FILES, default 1)"""
     return _env_flag("BACKUP_INCLUDE_FILES", True)
 
 
 def compress_enabled() -> bool:
-    """是否 gzip 压缩数据库备份（BACKUP_COMPRESS，默认 1）"""
+    """Whether to gzip the database backup (BACKUP_COMPRESS, default 1)"""
     return _env_flag("BACKUP_COMPRESS", True)
 
 
 def get_backup_config() -> dict:
-    """返回当前备份配置（供管理端展示，不含敏感信息）"""
+    """Return the current backup configuration (for the admin UI, no sensitive values)"""
     return {
         "BACKUP_ENABLED": is_enabled(),
         "BACKUP_DIR": get_backup_dir(),
@@ -143,19 +147,19 @@ def get_backup_config() -> dict:
     }
 
 
-# ---------------------------------------------------------------- 辅助函数
+# ---------------------------------------------------------------- helpers
 def _now() -> datetime:
     return datetime.now()
 
 
 def _db_url() -> str:
-    """当前数据库连接串（延迟导入，避免与 database/main 形成导入环）"""
+    """Current database connection string (lazy import, avoiding an import cycle with database/main)"""
     from database import DATABASE_URL
     return str(DATABASE_URL)
 
 
 def _db_type() -> str:
-    """返回 'sqlite' / 'postgresql' / 'unknown'"""
+    """Return 'sqlite' / 'postgresql' / 'unknown'"""
     url = _db_url().lower()
     if url.startswith("sqlite"):
         return "sqlite"
@@ -165,7 +169,7 @@ def _db_type() -> str:
 
 
 def _sqlite_db_path() -> str:
-    """从 DATABASE_URL 解析 SQLite 文件绝对路径"""
+    """Resolve the SQLite file's absolute path from DATABASE_URL"""
     url = _db_url()
     if ":memory:" in url:
         raise RuntimeError("当前为内存数据库（:memory:），无法备份为文件")
@@ -179,7 +183,7 @@ def _sqlite_db_path() -> str:
 
 
 def _app_version():
-    """应用版本号（优先环境变量 APP_VERSION，其次 main.app.version）"""
+    """Application version (prefers the APP_VERSION env var, then main.app.version)"""
     v = os.getenv("APP_VERSION")
     if v:
         return v
@@ -191,7 +195,7 @@ def _app_version():
 
 
 def _storage_stats(root: str) -> tuple:
-    """统计目录下文件数量与原始总字节数 -> (count, total_size)"""
+    """Count files and total raw bytes under a directory -> (count, total_size)"""
     count, total = 0, 0
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:
@@ -200,33 +204,34 @@ def _storage_stats(root: str) -> tuple:
                 total += os.path.getsize(full)
                 count += 1
             except OSError:
-                # 单个文件不可读（权限/被占用）不应让整体统计失败
+                # One unreadable file (permissions/locked) must not fail the overall stats
                 continue
     return count, total
 
 
 def _gzip_file(src: str, dest: str) -> None:
-    """用标准库 gzip 压缩文件（流式，避免大库一次性读入内存）"""
+    """Compress a file with the stdlib gzip (streaming, so a large database is never fully read into memory)"""
     with open(src, "rb") as fin, gzip.open(dest, "wb", compresslevel=6) as fout:
         shutil.copyfileobj(fin, fout)
 
 
-# ---------------------------------------------------------------- 数据库备份
+# ---------------------------------------------------------------- database backup
 def _backup_sqlite(dest_dir: str, timestamp: str) -> tuple:
-    """备份 SQLite 数据库（一致性备份）。
+    """Back up the SQLite database (consistent backup).
 
-    使用 sqlite3 官方 backup API：即使数据库正在被写入，也能得到一致的快照；
-    直接复制文件在写入过程中会得到损坏的库。
-    若当前 Python/驱动不支持 backup API，退化为文件复制并记警告。
+    Uses the official sqlite3 backup API: even while the database is being written,
+    it yields a consistent snapshot; directly copying the file mid-write produces a
+    corrupt database. If the current Python/driver lacks the backup API, falls back
+    to file copy with a warning.
 
-    返回 (备份文件路径, 原始未压缩字节数)。
+    Returns (backup file path, raw uncompressed byte count).
     """
     src = _sqlite_db_path()
     if not os.path.exists(src):
         raise RuntimeError(f"SQLite 数据库文件不存在: {src}")
 
     raw_dest = os.path.join(dest_dir, f"db_{timestamp}.sqlite")
-    # 清理可能残留的同名半成品
+    # Clean up a possibly leftover half-written file of the same name
     if os.path.exists(raw_dest):
         os.remove(raw_dest)
 
@@ -270,13 +275,13 @@ def _backup_sqlite(dest_dir: str, timestamp: str) -> tuple:
 
 
 def _backup_postgres(dest_dir: str, timestamp: str) -> tuple:
-    """备份 PostgreSQL 数据库（调用 pg_dump）。
+    """Back up the PostgreSQL database (via pg_dump).
 
-    pg_dump 不存在时抛出带安装指引的 RuntimeError。
-    返回 (备份文件路径, 原始未压缩字节数)。
+    Raises a RuntimeError with installation guidance when pg_dump is missing.
+    Returns (backup file path, raw uncompressed byte count).
     """
     url = _db_url()
-    # SQLAlchemy 方言前缀（postgresql+psycopg2://）不是 pg_dump 认识的连接串
+    # A SQLAlchemy dialect prefix (postgresql+psycopg2://) is not a connection string pg_dump understands
     dsn = re.sub(r"^postgresql\+[a-z0-9_]+://", "postgresql://", url, flags=re.I)
     dsn = re.sub(r"^postgres://", "postgresql://", dsn, flags=re.I)
 
@@ -292,7 +297,7 @@ def _backup_postgres(dest_dir: str, timestamp: str) -> tuple:
                 stdout=fout,
                 stderr=subprocess.PIPE,
                 check=False,
-                # Windows 下 pg_dump 是 exe，列表参数无需 shell，避免注入与转义问题
+                # On Windows pg_dump is an exe; list args need no shell, avoiding injection and escaping issues
                 shell=False,
             )
     except FileNotFoundError as e:
@@ -330,11 +335,11 @@ def _backup_postgres(dest_dir: str, timestamp: str) -> tuple:
     return raw_dest, size
 
 
-# ---------------------------------------------------------------- 材料文件备份
+# ---------------------------------------------------------------- material file backup
 def _backup_files(dest_dir: str, timestamp: str) -> tuple:
-    """打包材料存储根目录（storage.get_storage_root()）。
+    """Pack the material storage root directory (storage.get_storage_root()).
 
-    返回 (tar.gz 路径, 打包的文件数量)。
+    Returns (tar.gz path, number of files packed).
     """
     from storage import get_storage_root
 
@@ -347,8 +352,8 @@ def _backup_files(dest_dir: str, timestamp: str) -> tuple:
         os.remove(tar_path)
 
     count = 0
-    # 逐个文件加入（而不是 add 整个目录），既便于计数，也避免把根目录本身
-    # 带进归档导致解包时多出一层目录
+    # Add files one by one (rather than adding the whole directory): easier counting, and
+    # avoids dragging the root directory itself into the archive (extra level on extraction)
     with tarfile.open(tar_path, "w:gz") as tar:
         for dirpath, _dirnames, filenames in os.walk(root):
             for name in filenames:
@@ -358,7 +363,7 @@ def _backup_files(dest_dir: str, timestamp: str) -> tuple:
                     tar.add(full, arcname=rel)
                     count += 1
                 except OSError as e:
-                    # 单个文件被占用/无权限时跳过，不中断整体备份
+                    # Skip files that are locked/permission-denied; never abort the whole backup
                     logger.warning(f"材料文件打包跳过 {rel}: {e}")
 
     logger.info(f"材料文件备份完成: {tar_path}（{count} 个文件）")
@@ -367,7 +372,7 @@ def _backup_files(dest_dir: str, timestamp: str) -> tuple:
 
 # ---------------------------------------------------------------- manifest
 def _write_manifest(dest_dir: str, timestamp: str, data: dict) -> str:
-    """写入 manifest_<timestamp>.json，返回文件路径"""
+    """Write manifest_<timestamp>.json and return the file path"""
     path = os.path.join(dest_dir, f"manifest_{timestamp}.json")
     payload = dict(data)
     payload.setdefault("timestamp", timestamp)
@@ -378,7 +383,7 @@ def _write_manifest(dest_dir: str, timestamp: str, data: dict) -> str:
 
 
 def _read_manifest(path: str):
-    """读取 manifest，损坏时返回 None（不影响其他备份的展示）"""
+    """Read a manifest; returns None when corrupt (other backups still display)"""
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -389,7 +394,7 @@ def _read_manifest(path: str):
 
 
 def _scan_manifests(dest_dir: str) -> list:
-    """扫描目录下所有 manifest -> [(timestamp, path, data)]"""
+    """Scan all manifests in a directory -> [(timestamp, path, data)]"""
     result = []
     if not os.path.isdir(dest_dir):
         return result
@@ -404,13 +409,13 @@ def _scan_manifests(dest_dir: str) -> list:
 
 
 def _timestamp_of(filename: str):
-    """从备份文件名解析时间戳，不匹配返回 None"""
+    """Parse a timestamp from a backup filename; returns None on no match"""
     m = _TS_RE.match(filename)
     return m.group(1) if m else None
 
 
 def _files_for_timestamp(dest_dir: str, timestamp: str) -> list:
-    """列出属于某次备份的所有文件（db_/files_/manifest_）"""
+    """List all files belonging to one backup (db_/files_/manifest_)"""
     matched = []
     for name in os.listdir(dest_dir):
         if _timestamp_of(name) == timestamp:
@@ -419,11 +424,12 @@ def _files_for_timestamp(dest_dir: str, timestamp: str) -> list:
 
 
 def _cleanup_old(dest_dir: str, keep: int) -> list:
-    """按保留份数清理旧备份，返回被删除的文件名列表。
+    """Clean up old backups per the retention count; returns the deleted filenames.
 
-    以 manifest 的时间戳分组（每次备份的 db/files/manifest 三件套同一时间戳），
-    保留最新的 keep 份，其余连同 manifest 一起删除；同时清理早于最旧保留份的
-    孤立文件（例如 manifest 写入失败留下的残留）。
+    Groups by manifest timestamp (each backup's db/files/manifest trio shares one
+    timestamp), keeps the newest keep copies and deletes the rest along with their
+    manifests; also cleans up orphan files older than the oldest kept copy
+    (e.g. leftovers from a failed manifest write).
     """
     deleted = []
     if keep <= 0 or not os.path.isdir(dest_dir):
@@ -441,7 +447,7 @@ def _cleanup_old(dest_dir: str, keep: int) -> list:
             except OSError as e:
                 logger.warning(f"清理旧备份失败 {full}: {e}")
 
-    # 孤立文件清理：时间戳早于最旧保留份的才删，避免误删刚生成但 manifest 未写成的备份
+    # Orphan cleanup: only delete files older than the oldest kept copy, sparing fresh backups whose manifest failed to write
     if entries:
         oldest_kept = min(kept)
         for name in os.listdir(dest_dir):
@@ -460,12 +466,13 @@ def _cleanup_old(dest_dir: str, keep: int) -> list:
     return deleted
 
 
-# ---------------------------------------------------------------- 主流程
+# ---------------------------------------------------------------- main flow
 def _notify_admins(title: str, content: str) -> None:
-    """向所有管理员发送备份域告警（站内 + 已配置的外部渠道）。
+    """Send a backup-domain alert to all admins (in-app + configured external channels).
 
-    备份域的失败（备份本身失败 / 副本推送失败）都走这里：日志没人主动看，
-    告警才能促成处理。告警自身失败只记日志，绝不影响备份流程。
+    All backup-domain failures (backup itself failing / offsite copy push failing)
+    go through here: nobody reads logs proactively, alerts get things handled.
+    Alert failures are only logged and never affect the backup flow.
     """
     try:
         from database import SessionLocal
@@ -491,15 +498,16 @@ def _notify_admins(title: str, content: str) -> None:
         finally:
             db.close()
     except Exception as e:
-        # 告警本身失败不能反过来影响备份结果
+        # An alert failure must not, in turn, affect the backup result
         logger.error(f"发送备份告警时出错: {e}", exc_info=True)
 
 
 def _notify_backup_failure(result: dict) -> None:
-    """备份失败时通知管理员。
+    """Notify admins when a backup fails.
 
-    此前备份失败只写日志 —— 日志没人看，等于失败被静默吞掉。备份是「数据全丢」
-    与「没事发生」之间唯一的防线，失败必须让人知道。
+    Backup failures used to be log-only — unread logs mean the failure was silently
+    swallowed. The backup is the only line between "total data loss" and "nothing
+    happened"; failures must be made known.
     """
     error = result.get("error") or "未知原因"
     _notify_admins(
@@ -510,7 +518,7 @@ def _notify_backup_failure(result: dict) -> None:
 
 
 def _notify_offsite_sync_failure(result: dict, error: str) -> None:
-    """副本推送失败必须告警：本地备份虽完好，但灾备能力仍是零，不能静默。"""
+    """An offsite copy push failure must alert: the local backup is fine, but disaster-recovery capability is still zero. Never silent."""
     _notify_admins(
         "备份副本同步失败",
         f"时间点 {result.get('timestamp')} 的备份已在本机完成，"
@@ -520,17 +528,21 @@ def _notify_offsite_sync_failure(result: dict, error: str) -> None:
 
 
 def _run_offsite_sync(result: dict) -> None:
-    """备份成功后执行可选的副本推送命令（BACKUP_SYNC_CMD，默认关闭）。
+    """After a successful backup, run the optional offsite copy push command (BACKUP_SYNC_CMD, off by default).
 
-    背景：备份目录与数据库默认在同一台宿主机上，宿主机损坏两者皆失 ——
-    这是单机部署最大的单点。配置一条同步命令后，每次成功备份自动把副本
-    推到异机/异盘/对象存储，命令模板里的 {backup_dir} 会被替换为本次备份目录。
+    Background: by default the backup directory and the database sit on the same
+    host — if the host dies, both are lost, the biggest single point of failure of
+    single-host deployment. Once a sync command is configured, every successful
+    backup automatically pushes a copy to another machine/disk/object storage; the
+    {backup_dir} placeholder in the command template is replaced with this backup's directory.
 
-    安全边界：命令以应用进程身份与权限执行，属管理员级配置
-    （与 DATABASE_URL / JWT_SECRET_KEY 同级信任）——它默认不配置、不执行任何东西。
+    Security boundary: the command runs with the application process's identity and
+    permissions and is an admin-level setting (trusted at the same level as
+    DATABASE_URL / JWT_SECRET_KEY) — by default it is unset and executes nothing.
 
-    契约：同步失败不推翻备份本身的成功（本地备份完好），但必须告警。
-    本函数绝不抛异常，与 run_backup 的整体契约一致。
+    Contract: a sync failure does not overturn the backup's own success (the local
+    backup is intact), but it must alert. This function never raises, matching
+    run_backup's overall contract.
     """
     cmd = (os.getenv("BACKUP_SYNC_CMD") or "").strip()
     result["offsite_sync"] = None
@@ -542,8 +554,8 @@ def _run_offsite_sync(result: dict) -> None:
 
     started = time.time()
     try:
-        # shell=True 是刻意选择：rsync/rclone 管道（如 age|rclone）离不开 shell。
-        # 命令来自管理员配置而非用户输入，与其它环境变量同级信任。
+        # shell=True is a deliberate choice: rsync/rclone pipelines (e.g. age|rclone) need a shell.
+        # The command comes from admin configuration, not user input; trusted like other env vars.
         proc = subprocess.run(  # nosec B602
             cmd,
             shell=True,
@@ -579,16 +591,17 @@ def _run_offsite_sync(result: dict) -> None:
 
 
 def run_backup(include_files: bool = None) -> dict:
-    """执行一次完整备份（数据库 + 可选材料文件）。
+    """Run one complete backup (database + optional material files).
 
-    参数
-    - include_files: 是否打包材料文件；None 时取 BACKUP_INCLUDE_FILES
+    Arguments
+    - include_files: whether to pack material files; None means use BACKUP_INCLUDE_FILES
 
-    返回结果摘要：
+    Returns a result summary:
     {"success", "db_backup", "files_backup", "manifest",
      "duration_seconds", "error", "cleaned", "offsite_sync"}
 
-    数据库与文件备份任一失败都只记录在结果里，绝不抛异常（备份不能影响业务）。
+    Any failure in the database or file backup is only recorded in the result,
+    never raised (a backup must not affect the business).
     """
     started = time.time()
     timestamp = _now().strftime(TIMESTAMP_FORMAT)
@@ -624,7 +637,7 @@ def run_backup(include_files: bool = None) -> dict:
     files_total = 0
     files_backup_path = None
 
-    # ---- 1) 数据库备份 ----
+    # ---- 1) Database backup ----
     try:
         if db_type == "sqlite":
             db_path, db_size = _backup_sqlite(dest_dir, timestamp)
@@ -638,7 +651,7 @@ def run_backup(include_files: bool = None) -> dict:
         errors.append(f"数据库备份失败: {e}")
         logger.error(f"数据库备份失败: {e}", exc_info=True)
 
-    # ---- 2) 材料文件备份 ----
+    # ---- 2) Material file backup ----
     if include_files:
         try:
             from storage import get_storage_root
@@ -650,7 +663,7 @@ def run_backup(include_files: bool = None) -> dict:
             errors.append(f"材料文件备份失败: {e}")
             logger.error(f"材料文件备份失败: {e}", exc_info=True)
 
-    # ---- 3) 写 manifest（无论成功失败都写，便于排查与"今日是否已备份"判断）----
+    # ---- 3) Write the manifest (written on both success and failure, for troubleshooting and the "backed up today" check) ----
     result["error"] = "；".join(errors) if errors else None
     result["success"] = result["db_backup"] is not None and not errors
     result["duration_seconds"] = round(time.time() - started, 3)
@@ -679,9 +692,9 @@ def run_backup(include_files: bool = None) -> dict:
         result["success"] = False
         logger.error(f"写入备份清单失败: {e}", exc_info=True)
 
-    # ---- 4) 标记文件（供调度器判断"今天是否已成功备份"，避免同小时重复执行）----
-    # 仅在成功时写入：失败时保留重试机会（受 BACKUP_HOUR 小时判断约束，
-    # 因此同一天内最多在该小时窗口内重试，不会造成频繁重试）
+    # ---- 4) Marker file (lets the scheduler know whether "today was successfully backed up", avoiding duplicate runs within the hour) ----
+    # Only written on success: on failure a retry chance is preserved (bounded by the
+    # BACKUP_HOUR hour check, so same-day retries stay inside that hour window and never hammer)
     if result["success"]:
         try:
             with open(os.path.join(dest_dir, _MARKER_NAME), "w", encoding="utf-8") as f:
@@ -689,20 +702,20 @@ def run_backup(include_files: bool = None) -> dict:
         except OSError as e:
             logger.warning(f"写入备份标记文件失败（不影响备份结果）: {e}")
 
-    # ---- 5) 清理超出保留份数的旧备份 ----
+    # ---- 5) Clean up old backups beyond the retention count ----
     try:
         result["cleaned"] = _cleanup_old(dest_dir, get_keep())
     except Exception as e:
         logger.warning(f"清理旧备份失败（不影响本次备份）: {e}")
 
-    # ---- 6) 推送副本到异机/异盘（BACKUP_SYNC_CMD 配置后启用，默认关闭）----
-    # 备份目录与数据库同在一台宿主机，宿主机损坏两者皆失——单机部署最大单点。
-    # 同步失败不推翻备份成功（本地备份完好），但会向管理员告警。
+    # ---- 6) Push a copy to another machine/disk (enabled once BACKUP_SYNC_CMD is set, off by default) ----
+    # Backup dir and database share one host; if it dies both are lost — the biggest single
+    # point of failure of single-host deployment. A sync failure does not overturn backup success, but alerts the admin.
     if result["success"]:
         try:
             _run_offsite_sync(result)
         except Exception as e:
-            # 与 run_backup「绝不抛异常」契约一致：同步通道自身异常不得击穿备份
+            # Consistent with run_backup's "never raises" contract: a sync channel failure must not pierce the backup
             logger.error(f"副本推送执行异常: {e}", exc_info=True)
             result["offsite_sync"] = {"ok": False, "error": str(e)}
 
@@ -713,9 +726,9 @@ def run_backup(include_files: bool = None) -> dict:
         )
     else:
         logger.error(f"备份失败: {result['error']}")
-        # 失败必须让人知道：日志没人主动看，告警才能促成处理。
-        # 告警调用本身也包一层：run_backup 的契约是「绝不抛异常」，
-        # 不能因为告警通道出问题就击穿这个契约。
+        # Failures must be known: nobody reads logs proactively; alerts get things handled.
+        # The alert call is also wrapped: run_backup's contract is "never raises", and a
+        # broken alert channel must not pierce that contract.
         try:
             _notify_backup_failure(result)
         except Exception as e:
@@ -723,11 +736,11 @@ def run_backup(include_files: bool = None) -> dict:
     return result
 
 
-# ---------------------------------------------------------------- 查询 / 调度辅助
+# ---------------------------------------------------------------- queries / scheduling helpers
 def list_backups() -> list:
-    """列出所有备份（读 manifest，按时间倒序），供管理端 API 使用。
+    """List all backups (from manifests, newest first), for the admin API.
 
-    每个元素为 manifest 内容，额外附带 "manifest_file" 字段。
+    Each element is a manifest's content plus an extra "manifest_file" field.
     """
     dest_dir = get_backup_dir()
     items = []
@@ -742,10 +755,11 @@ def list_backups() -> list:
 
 
 def last_backup_time(success_only: bool = True):
-    """最近一次备份时间（datetime），无记录返回 None。
+    """Most recent backup time (datetime); returns None when there is no record.
 
-    success_only=True（默认）时只统计成功的备份，供调度器判断"今天是否已备份"；
-    失败记录不应阻止当天的重试。
+    With success_only=True (default) only successful backups count, for the
+    scheduler's "already backed up today" check; failed records must not block
+    same-day retries.
     """
     latest = None
     for item in list_backups():
@@ -766,13 +780,14 @@ def last_backup_time(success_only: bool = True):
 
 
 def _last_success_date():
-    """最近一次成功备份的日期字符串（YYYY-MM-DD），无记录返回 None。
+    """Date string (YYYY-MM-DD) of the most recent successful backup; returns None when there is no record.
 
-    优先读标记文件（成功时写入），回落到扫描 manifest 中成功的记录。
+    Prefers the marker file (written on success), falling back to scanning manifests
+    for successful records.
     """
     marker = os.path.join(get_backup_dir(), _MARKER_NAME)
     if os.path.exists(marker):
-        # 标记文件读不到时回落到扫描 manifest，不影响判断
+        # If the marker file is unreadable, fall back to scanning manifests, without affecting the check
         with suppress(OSError):
             with open(marker, encoding="utf-8") as f:
                 value = f.read().strip()
@@ -783,25 +798,25 @@ def _last_success_date():
 
 
 def should_run_now(now: datetime = None) -> bool:
-    """调度器判断：当前是否应执行自动备份。
+    """Scheduler check: whether the automatic backup should run now.
 
-    规则：备份已启用 && 当前小时 == BACKUP_HOUR && 今天尚未成功备份过。
-    同时使用标记文件与 manifest 最新成功时间判断，避免每小时重复备份；
-    失败不写标记，因此同一天内仍可重试。
+    Rule: backup enabled && current hour == BACKUP_HOUR && no successful backup today.
+    Uses both the marker file and the latest successful manifest time to avoid hourly
+    duplicate backups; failures write no marker, so same-day retries remain possible.
     """
     if not is_enabled():
         return False
     now = now or _now()
     if now.hour != get_hour():
         return False
-    # 今天已成功备份过则不重复执行（失败不写标记，因此当天仍可重试）
+    # Already successfully backed up today: do not run again (failures write no marker, so retries stay possible)
     return _last_success_date() != now.strftime("%Y-%m-%d")
 
 
 if __name__ == "__main__":
-    # 便于外部 cron 直接调用：python tasks/backup.py
-    # 直接以脚本方式执行时，脚本目录是 backend/tasks，backend 不在 sys.path 上，
-    # 需要手动加入，否则 from database / storage 等导入会失败。
+    # Convenient for external cron: python tasks/backup.py
+    # Run directly as a script, the script directory is backend/tasks and backend is not
+    # on sys.path; add it manually, or imports like from database / storage will fail.
     import sys
 
     if BACKEND_DIR not in sys.path:
@@ -813,5 +828,5 @@ if __name__ == "__main__":
     )
     outcome = run_backup()
     print(json.dumps(outcome, ensure_ascii=False, indent=2))
-    # 失败时以非 0 退出码结束，方便 cron 告警（不影响调度器内调用）
+    # Exit non-zero on failure for cron alerting (does not affect the in-scheduler call)
     raise SystemExit(0 if outcome["success"] else 1)

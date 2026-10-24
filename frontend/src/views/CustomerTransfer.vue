@@ -4,7 +4,7 @@
       <h3>客户转让管理</h3>
     </div>
 
-    <!-- 筛选栏 -->
+    <!-- Filter bar -->
     <div class="filter-bar">
       <div class="filter-item">
         <el-select v-model="filterSalesman" placeholder="按业务员筛选" clearable @change="loadData">
@@ -31,7 +31,7 @@
       </el-button>
     </div>
 
-    <!-- 客户表格 -->
+    <!-- Customer table -->
     <el-table :data="customers" v-loading="loading" style="width: 100%; margin-top: 16px"
       @selection-change="handleSelectionChange" row-key="id">
       <el-table-column type="selection" width="50" />
@@ -89,7 +89,7 @@ async function loadSalesmen() {
     const { data } = await api.get('/api/customers/salesmen')
     salesmenList.value = data || []
   } catch {
-    // 转让目标下拉依赖此列表，取不到时保持空列表
+    // The transfer target dropdown depends on this list; keep it empty if loading fails
   }
 }
 

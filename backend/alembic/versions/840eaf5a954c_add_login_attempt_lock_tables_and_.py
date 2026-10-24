@@ -6,7 +6,6 @@ Create Date: 2026-09-18 21:47:42.284302
 
 """
 from collections.abc import Sequence
-from typing import Union
 
 from alembic import op
 import sqlalchemy as sa
@@ -44,8 +43,8 @@ def upgrade() -> None:
     op.create_index(op.f('ix_login_attempts_id'), 'login_attempts', ['id'], unique=False)
     op.create_index(op.f('ix_login_attempts_key'), 'login_attempts', ['key'], unique=False)
     op.create_index(op.f('ix_login_attempts_scope'), 'login_attempts', ['scope'], unique=False)
-    # SQLite 不支持 ALTER 加约束，必须走 batch 模式（copy-and-move）；
-    # PostgreSQL 下 batch_alter_table 等价于普通 ALTER，无副作用。
+    # SQLite does not support adding constraints via ALTER, so batch mode (copy-and-move) is required;
+    # on PostgreSQL, batch_alter_table is equivalent to a plain ALTER with no side effects.
     with op.batch_alter_table('materials') as batch_op:
         batch_op.create_unique_constraint(
             'uq_material_app_category_version', ['application_id', 'category', 'version']

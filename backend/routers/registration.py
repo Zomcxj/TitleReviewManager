@@ -15,7 +15,7 @@ from schemas import CustomerResponse, RegistrationTokenCreate, RegistrationToken
 
 
 def get_local_ip() -> str:
-    """获取本机局域网 IP"""
+    """Get the local LAN IP address"""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -25,7 +25,7 @@ def get_local_ip() -> str:
     except Exception:
         return "127.0.0.1"
 
-# 优先使用环境变量，否则自动检测局域网 IP
+# Prefer the environment variable, otherwise auto-detect the LAN IP
 _env_url = os.getenv("PUBLIC_URL")
 PUBLIC_URL = _env_url.rstrip("/") if _env_url else f"http://{get_local_ip()}:8000"
 

@@ -43,7 +43,7 @@ class PasswordChange(BaseModel):
     @field_validator("new_password")
     @classmethod
     def _check_strength(cls, v: str) -> str:
-        """自助改密时校验强度：拒绝常见弱口令、纯数字、纯字母"""
+        """Strength check for self-service password change: rejects common weak passwords, digits-only and letters-only values"""
         from utils.validators import check_password_strength
         err = check_password_strength(v)
         if err:
@@ -69,7 +69,7 @@ class CustomerCreate(BaseModel):
     @field_validator("id_number")
     @classmethod
     def _check_id_number(cls, v: str) -> str:
-        """新增客户时校验身份证号校验位（存量数据不校验，避免阻断历史数据编辑）"""
+        """Validate the ID number checksum when creating a customer (existing records are not re-checked, so editing historical data is not blocked)"""
         from utils.validators import normalize_id_number, validate_id_number
         value = normalize_id_number(v)
         err = validate_id_number(value)
@@ -99,7 +99,7 @@ class CustomerUpdate(BaseModel):
     position: str | None = Field(None, max_length=100)
     professional_years: int | None = None
     project_experiences: str | None = None
-    # 注意：assigned_salesman_id 已移除 —— 客户归属变更必须走转让接口（有审计和通知）
+    # Note: assigned_salesman_id removed — ownership changes must go through the transfer endpoint (audited and notified)
 
 
 class CustomerResponse(BaseModel):
@@ -124,17 +124,11 @@ class CustomerResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ApplicationCreate(BaseModel):
-    customer_id: int
-    professional_category: str | None = Field(None, max_length=100)
-    title_level: str | None = Field(None, max_length=100)
-
-
 class ApplicationUpdate(BaseModel):
     professional_category: str | None = Field(None, max_length=100)
     title_level: str | None = Field(None, max_length=100)
     status: str | None = Field(None, max_length=20)
-    # submitted_at / assigned_salesman_id 已移除：submitted_at 由提交动作写入，客户归属属于 Customer
+    # submitted_at / assigned_salesman_id removed: submitted_at is written by the submit action, and customer ownership belongs to Customer
     assigned_reviewer_id: int | None = None
     institution_name: str | None = Field(None, max_length=200)
 
@@ -169,7 +163,7 @@ class ApplicationResponse(BaseModel):
 
 
 class ApplicationFinanceUpdate(BaseModel):
-    """收费/合同/证书信息更新（独立于状态流转）"""
+    """Update of fee/contract/certificate info (independent of status transitions)"""
     contract_no: str | None = Field(None, max_length=64)
     contract_signed_at: datetime | None = None
     fee_amount: float | None = Field(None, ge=0)

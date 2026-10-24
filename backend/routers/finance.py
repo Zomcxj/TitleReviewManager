@@ -1,14 +1,14 @@
 """
-收费 / 合同 / 回款 / 证书管理
+Fees / contracts / payments / certificates
 
-- 批次维度的合同与证书信息维护（admin / salesman）
-- 回款明细登记，自动汇总 paid_amount 与 payment_status
-- 财务总览与待收款提醒
+- Contract and certificate maintenance per application batch (admin / salesman)
+- Payment record registration with automatic paid_amount and payment_status aggregation
+- Finance summary and pending payment reminders
 
-权限约定：
-  * 查询类（A1）登录用户即可
-  * 维护类（A2/A3/A6）admin 全量，salesman 仅限自己名下客户
-  * 删除回款（A4）、财务总览（A5）仅 admin
+Permission rules:
+  * Query endpoints (A1): any authenticated user
+  * Maintenance endpoints (A2/A3/A6): admin full access, salesman limited to their own customers
+  * Payment deletion (A4) and finance summary (A5): admin only
 """
 from datetime import datetime
 from decimal import Decimal
@@ -35,10 +35,10 @@ PAYMENT_STATUS_VALUES = [s.value for s in PaymentStatus]
 CERTIFICATE_STATUS_VALUES = [s.value for s in CertificateStatus]
 
 
-# ---------- 内部工具 ----------
+# ---------- Internal helpers ----------
 
 def _jsonable(value):
-    """把 Decimal / datetime 转成可写入 JSON 列的值"""
+    """Convert Decimal / datetime into values writable to a JSON column"""
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, datetime):
@@ -54,7 +54,7 @@ def _get_application(db: Session, application_id: int) -> Application:
 
 
 def _check_owner_or_admin(app: Application, user: dict) -> None:
-    """salesman 只能操作自己名下客户的批次"""
+    """Salesmen can only operate on batches of their own customers"""
     if user.get("role") == "admin":
         return
     customer = app.customer
@@ -63,7 +63,7 @@ def _check_owner_or_admin(app: Application, user: dict) -> None:
 
 
 def _serialize_finance(db: Session, app: Application) -> dict:
-    """统一的财务/证书信息结构（A1 返回体）"""
+    """Unified finance/certificate structure (A1 response body)"""
     records = (
         db.query(PaymentRecord)
         .filter(PaymentRecord.application_id == app.id)
@@ -93,7 +93,7 @@ def _serialize_finance(db: Session, app: Application) -> dict:
 
 
 def _recompute_payment(db: Session, app: Application) -> float:
-    """按回款明细重新汇总 paid_amount 并推导 payment_status"""
+    """Recompute paid_amount from payment records and derive payment_status"""
     total = (
         db.query(func.coalesce(func.sum(PaymentRecord.amount), 0))
         .filter(PaymentRecord.application_id == app.id)
@@ -112,7 +112,7 @@ def _recompute_payment(db: Session, app: Application) -> float:
     return total
 
 
-# ---------- A1 查询 ----------
+# ---------- A1 query ----------
 
 @router.get("/application/{application_id}")
 async def get_application_finance(
@@ -121,13 +121,13 @@ async def get_application_finance(
     current_user: dict = Depends(get_current_user),
 ):
     app = _get_application(db, application_id)
-    # 数据隔离：合同金额与回款属敏感经营数据，业务员仅能看自己名下客户
+    # Data isolation: contract amounts and payments are sensitive business data; salesmen can only view their own customers
     from utils.data_scope import assert_can_access_application
     assert_can_access_application(db, current_user, application_id)
     return _serialize_finance(db, app)
 
 
-# ---------- A2 更新合同/证书 ----------
+# ---------- A2 update contract/certificate ----------
 
 @router.put("/application/{application_id}")
 async def update_application_finance(
@@ -142,7 +142,7 @@ async def update_application_finance(
 
     updates = data.model_dump(exclude_unset=True)
 
-    # 两个状态列 NOT NULL：显式传 null 视为未提供，避免写入空值破坏约束
+    # Both status columns are NOT NULL: treat an explicit null as not provided to avoid breaking the constraint
     for nullable_forbidden in ("payment_status", "certificate_status"):
         if updates.get(nullable_forbidden) is None:
             updates.pop(nullable_forbidden, None)
@@ -185,7 +185,7 @@ async def update_application_finance(
     return _serialize_finance(db, app)
 
 
-# ---------- A3 登记回款 ----------
+# ---------- A3 register payment ----------
 
 @router.post("/application/{application_id}/payments")
 async def create_payment(
@@ -232,7 +232,7 @@ async def create_payment(
     return _serialize_finance(db, app)
 
 
-# ---------- A4 删除回款（仅 admin） ----------
+# ---------- A4 delete payment (admin only) ----------
 
 @router.delete("/payments/{payment_id}")
 async def delete_payment(
@@ -277,7 +277,7 @@ async def delete_payment(
     return {"message": "回款记录已删除"}
 
 
-# ---------- A5 财务总览（仅 admin） ----------
+# ---------- A5 finance summary (admin only) ----------
 
 @router.get("/summary")
 async def finance_summary(
@@ -317,7 +317,7 @@ async def finance_summary(
         entry["total_fee"] += fee
         entry["total_paid"] += paid
 
-    # 补齐业务员姓名
+    # Fill in salesman names
     sids = [sid for sid in salesman_agg if sid is not None]
     name_map = {}
     if sids:
@@ -345,7 +345,7 @@ async def finance_summary(
     }
 
 
-# ---------- A6 待收款提醒 ----------
+# ---------- A6 pending payment reminders ----------
 
 @router.get("/pending")
 async def pending_payments(

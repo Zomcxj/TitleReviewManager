@@ -54,7 +54,7 @@ async def list_public_customers(
         ).order_by(desc(Application.id)).first()
         
         item = CustomerResponse.model_validate(c).model_dump()
-        # 公海客户尚未归属，除管理员外一律脱敏（避免批量抓取证件号）
+        # Public-pool customers are not yet assigned; mask them for everyone except admins (prevents bulk scraping of ID numbers)
         from utils.masking import apply_customer_masking
         apply_customer_masking(item, current_user, c)
         results.append({
@@ -95,7 +95,7 @@ async def claim_customer(
         Customer.is_deleted == False,  # noqa: E712
     ).count()
     
-    # 持有上限由系统配置 pool_claim_limit 驱动（默认 50）
+    # Claim limit is driven by the system config pool_claim_limit (default 50)
     claim_limit = get_config(db, "pool_claim_limit")
     if current_salesman_count >= claim_limit:
         raise HTTPException(status_code=400, detail=f"每人最多持有 {claim_limit} 个客户")
@@ -105,7 +105,7 @@ async def claim_customer(
     customer.is_public = False
     customer.public_at = None
     customer.last_follow_up_at = utcnow()
-    # 分配后 SLA 时长由系统配置 sla_hours_after_assign 驱动（默认 24 小时）
+    # SLA duration after assignment is driven by the system config sla_hours_after_assign (default 24 hours)
     sla_hours = get_config(db, "sla_hours_after_assign")
     customer.sla_deadline = utcnow() + timedelta(hours=sla_hours)
     

@@ -1,7 +1,8 @@
-"""今日待办工作台测试
+"""Today's to-do workbench tests
 
-待办接口将散落的跟进、审核、截止、回款汇总成按角色过滤的 dashboard，
-并验证调度器能否正确触发三类运营催办通知。
+The workbench API aggregates scattered follow-ups, reviews, deadlines, and
+payments into a role-filtered dashboard, and verifies that the scheduler
+correctly fires the three types of operational reminder notifications.
 """
 from datetime import datetime, timedelta
 
@@ -44,7 +45,7 @@ def _make_app(db, customer_id, status="完成资料", batch="WBBATCH"):
 
 
 class TestWorkbench:
-    """今日待办工作台"""
+    """Today's to-do workbench"""
 
     def test_workbench_returns_summary(self, client, db, test_salesman):
         _login(client, "testsalesman", "salespassword")
@@ -132,7 +133,7 @@ class TestWorkbench:
 
 
 class TestReviewQueue:
-    """审核队列后端化"""
+    """Review queue moved to the backend"""
 
     def test_pending_reviews_empty(self, client, db, test_user):
         _login(client, "testuser", "testpassword")
@@ -159,7 +160,7 @@ class TestReviewQueue:
         assert any(item["status"] == "资料补充" for item in data["items"])
 
     def test_pending_reviews_only_with_materials(self, client, db, test_salesman, test_user):
-        """队列只显示仍有待审材料的批次，材料已全审完的批次不出现"""
+        """The queue only shows applications still having materials pending review; fully reviewed ones do not appear"""
         import models
         c = _make_customer(db, test_salesman.id, "材料已审完")
         app = _make_app(db, c.id, "完成资料", "ALLAP")
@@ -177,10 +178,10 @@ class TestReviewQueue:
 
 
 class TestReminders:
-    """运营催办（跟进逾期、审核 SLA、申报截止）"""
+    """Operational reminders (overdue follow-ups, review SLA, application deadlines)"""
 
     def test_review_sla_skip_no_pending_materials(self, client, db, test_salesman):
-        """材料已全审完不再催办审核 SLA"""
+        """No review SLA reminder once all materials are reviewed"""
         import models
         c = _make_customer(db, test_salesman.id, "材料已全审")
         app = _make_app(db, c.id, "完成资料", "NOSLA")
@@ -195,11 +196,11 @@ class TestReminders:
         from utils.reminders import send_review_sla_reminders
         send_review_sla_reminders(db)
         after = db.query(models.Notification).count()
-        # 不应产生新通知，因为该批次没有待审核材料
+        # No new notifications should be produced since the application has no materials pending review
         assert after == before
 
     def test_scheduler_calls_all_reminders(self, client, db, test_salesman):
-        """调度器集成：一轮触发全部催办"""
+        """Scheduler integration: one round fires all reminders"""
         from utils.reminders import send_operational_reminders
         result = send_operational_reminders()
         assert "follow_up" in result

@@ -15,17 +15,17 @@ app.use(pinia)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 
-// 图标按需使用：各组件自行 `import { Xxx } from '@element-plus/icons-vue'`。
-// 此前这里把 294 个图标全量全局注册，未使用的图标无法被 tree-shaking 剔除，
-// 主包因此白白变大。全量注册还掩盖了真实依赖：任何图标不 import 也能用，
-// 删掉 import 时不会报错，直到运行时才暴露。
+// Icons are imported on demand: each component does its own `import { Xxx } from '@element-plus/icons-vue'`.
+// Previously all 294 icons were registered globally here, so unused icons could not be removed by
+// tree-shaking and the main bundle grew for nothing. Global registration also hid real dependencies:
+// any icon worked without being imported, and no error appeared until it surfaced at runtime.
 
 // ---------------------------------------------------------------------------
-// 全局错误上报：Vue 组件内异常、全局 JS 错误、未处理的 Promise 拒绝
-// reportError 内部使用原生 fetch 且静默失败，不会反向影响页面渲染
+// Global error reporting: exceptions inside Vue components, global JS errors, and unhandled
+// Promise rejections. reportError uses native fetch and fails silently, never affecting rendering
 // ---------------------------------------------------------------------------
 
-/** 把任意抛出物转换成可读的 message */
+/** Convert any thrown value into a readable message */
 function toErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message || err.name || 'Error'
   if (typeof err === 'string') return err
@@ -37,7 +37,7 @@ function toErrorMessage(err: unknown): string {
   }
 }
 
-/** 提取堆栈信息 */
+/** Extract the stack trace */
 function toErrorStack(err: unknown): string {
   if (err instanceof Error && typeof err.stack === 'string') return err.stack
   return ''
@@ -52,8 +52,8 @@ app.config.errorHandler = (err, _instance, info) => {
 }
 
 window.addEventListener('error', (event: ErrorEvent) => {
-  // 资源加载失败（img/script/link 等）也会冒泡到 window 的 error 事件，
-  // 但 event.error 为 null 且 message 为空，没有排查价值，直接忽略。
+  // Resource load failures (img/script/link, etc.) also bubble up to the window error event,
+  // but event.error is null and message is empty, so they are useless for debugging; ignore them.
   if (!event.message && !event.error) return
   const message = event.message || toErrorMessage(event.error)
   const stack = [toErrorStack(event.error), event.filename ? `at ${event.filename}:${event.lineno}:${event.colno}` : '']
@@ -62,17 +62,17 @@ window.addEventListener('error', (event: ErrorEvent) => {
   reportError(message, stack)
 })
 
-/** 判断是否为「正常流程」的请求异常（用户取消 / 4xx 业务错误），这类不上报 */
+/** Decide whether a rejection is an "expected flow" request failure (user cancel / 4xx business error); these are not reported */
 function isExpectedRequestRejection(reason: unknown): boolean {
   if (!reason || typeof reason !== 'object') return false
   const err = reason as { code?: unknown; isAxiosError?: unknown; response?: { status?: unknown } }
-  // 用户主动取消的请求（AbortController / axios cancel）
+  // Requests actively canceled by the user (AbortController / axios cancel)
   if (err.code === 'ERR_CANCELED' || err.code === 'ERR_ABORTED') return true
-  // axios 异常统一交给 src/api 的响应拦截器处理：
-  // 5xx 已在拦截器里上报，4xx/取消不上报。这里再报一次会产生重复记录。
+  // Axios errors are handled uniformly by the response interceptor in src/api:
+  // 5xx are already reported there, 4xx/cancel are not. Reporting again here would create duplicates.
   if (err.isAxiosError === true) return true
   const status = err.response?.status
-  // 其他形态的 4xx 业务错误同样不上报
+  // Other forms of 4xx business errors are likewise not reported
   if (typeof status === 'number' && status >= 400 && status < 500) return true
   return false
 }

@@ -97,7 +97,7 @@ function handleSelectionChange(rows: any[]) {
   selectedRows.value = rows
 }
 
-// 无申报批次的客户不可批量操作
+// Customers without an application batch cannot be batch-operated
 function isRowSelectable(row: any) {
   return row.application_id != null
 }
@@ -115,7 +115,7 @@ function statusType(status: string) {
 
 function getHint(status: string) {
   if (!status) return '待完善信息'
-  // 非业务员（审核员/管理员）统一走 else 分支的提示文案
+  // Non-salesman users (reviewers/admins) uniformly use the hint text from the else branch
   const isSalesman = authStore.isSalesman || authStore.isAdmin
   const hints: Record<string, string> = {
     '初次申报': isSalesman ? '需上传材料' : '待审核',
@@ -142,7 +142,7 @@ async function loadSalesmen() {
     data.forEach((s: any) => { map[s.id] = s.real_name })
     salesmenMap.value = map
   } catch {
-    // 业务员列表仅用于筛选下拉，取不到时降级为不显示该筛选
+    // The salesman list is only used for the filter dropdown; degrade to hiding the filter if it cannot be loaded
   }
 }
 

@@ -28,7 +28,7 @@ VALID_FEEDBACK_TYPES = [t.value for t in FeedbackType]
 @router.get("/application/{application_id}")
 async def get_application_feedbacks(application_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
-    # 数据隔离：机构反馈含评审意见，业务员仅能查看自己名下客户的
+    # Data isolation: institution feedback contains review opinions; salesmen can only view their own customers'
     from utils.data_scope import assert_can_access_application
     assert_can_access_application(db, user, application_id)
     feedbacks = db.query(Feedback).filter(Feedback.application_id == application_id).all()
@@ -52,7 +52,7 @@ async def create_feedback(
     if feedback_type not in VALID_FEEDBACK_TYPES:
         raise HTTPException(status_code=400, detail=f"无效的反馈类型，可选：{VALID_FEEDBACK_TYPES}")
 
-    # 状态机：仅提交评审机构审核状态允许录入机构反馈
+    # State machine: institution feedback can only be recorded in the submitted-to-institution status
     if app.status != ApplicationStatus.SUBMITTED.value:
         raise HTTPException(status_code=400, detail=f"当前状态（{app.status}）不允许录入机构反馈")
     next_states = [s.value for s in VALID_TRANSITIONS.get(ApplicationStatus(app.status), [])]
@@ -64,26 +64,38 @@ async def create_feedback(
         ext = os.path.splitext(attachment.filename)[1].lower()
         if ext not in ALLOWED_FILE_EXTENSIONS:
             raise HTTPException(status_code=400, detail=f"不支持的文件类型：{ext}")
-        if attachment.size is not None:
-            # 优先使用请求声明的文件大小，超限时不再读取内容
-            if attachment.size > MAX_FILE_SIZE:
-                raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
-            file_content = await attachment.read()
-        else:
-            file_content = await attachment.read()
-            if len(file_content) > MAX_FILE_SIZE:
-                raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
+        # Size check BEFORE reading any content: an oversized upload is rejected
+        # without buffering it
+        if attachment.size is not None and attachment.size > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB")
         from utils.upload_guard import validate_file_content
-        content_err = validate_file_content(attachment.filename, file_content)
+        head = await attachment.read(64)
+        if not head and (attachment.size or 0) > 0:
+            raise HTTPException(status_code=400, detail="文件内容为空")
+        content_err = validate_file_content(attachment.filename, head)
         if content_err:
             raise HTTPException(status_code=400, detail=content_err)
+        await attachment.seek(0)  # rewind so the chunked write starts from the beginning
         unique_name = f"feedback_{uuid.uuid4().hex}{ext}"
         app_dir = os.path.join(UPLOAD_DIR, str(application_id))
         os.makedirs(app_dir, exist_ok=True)
         attachment_path = f"uploads/{application_id}/{unique_name}"
         full_path = os.path.join(BASE_DIR, attachment_path)
-        with open(full_path, "wb") as f:
-            f.write(file_content)
+        # Chunked write: peak memory is one 1MB chunk instead of the whole file
+        written = 0
+        try:
+            with open(full_path, "wb") as f:
+                while True:
+                    chunk = await attachment.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > MAX_FILE_SIZE:
+                        raise ValueError("size cap exceeded")
+                    f.write(chunk)
+        except ValueError:
+            os.remove(full_path)  # a truncated file is worse than no file
+            raise HTTPException(status_code=400, detail=f"文件大小超过限制：{MAX_FILE_SIZE // 1024 // 1024}MB") from None
 
     feedback = Feedback(
         application_id=application_id,
@@ -122,11 +134,11 @@ async def download_feedback_attachment(
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """机构反馈附件鉴权下载（/uploads 静态挂载已移除，统一走此端点）"""
+    """Authenticated download of feedback attachments (the /uploads static mount has been removed; all downloads go through this endpoint)"""
     feedback = db.query(Feedback).filter(Feedback.id == feedback_id).first()
     if not feedback or not feedback.attachment_path:
         raise HTTPException(status_code=404, detail="附件不存在")
-    # 数据隔离：机构反馈附件按客户归属校验
+    # Data isolation: feedback attachments are access-checked by customer ownership
     from utils.data_scope import assert_can_access_application
     assert_can_access_application(db, user, feedback.application_id)
     full_path = os.path.join(BASE_DIR, feedback.attachment_path)

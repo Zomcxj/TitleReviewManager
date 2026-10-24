@@ -16,7 +16,7 @@ def manual_audit_log(
     new_value: dict | None = None,
     request: Request | None = None,
 ):
-    """手动记录审计日志。只加入会话，随调用方的事务一起提交，避免打断/回滚主业务。"""
+    """Record an audit log entry manually. Only adds to the session and commits with the caller's transaction, so the main business is never interrupted/rolled back."""
     from main import logger
 
     try:

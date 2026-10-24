@@ -1,14 +1,15 @@
 """
-登录会话管理（支持查看活跃设备与单设备下线）
+Login session management (active device listing and per-device logout)
 
-为什么需要会话表：
-    JWT 是无状态的，签发后无法单独作废。之前只能靠 user.token_version 做
-    「全量下线」（改密时所有设备一起掉线），无法回答：
-    - 我当前有哪些设备登录着？
-    - 手机丢了，怎么只把手机踢掉而不影响电脑？
+Why a session table is needed:
+    JWT is stateless — once issued, a token cannot be revoked individually. Before,
+    only user.token_version provided a "log out everywhere" switch (all devices drop
+    on password change), which cannot answer:
+    - Which devices are logged in right now?
+    - My phone is lost — how do I kick just the phone without affecting the computer?
 
-    因此在登录时落一条 UserSession，token 里带 session_id，
-    认证时校验该会话未被撤销，即可实现按设备管理。
+    So a UserSession row is created at login, the token carries a session_id, and
+    authentication verifies the session is not revoked — enabling per-device management.
 """
 import logging
 import re
@@ -20,15 +21,15 @@ logger = logging.getLogger(__name__)
 
 
 def parse_device_label(user_agent: str | None) -> str:
-    """从 User-Agent 粗略解析设备描述（不引入 UA 解析库，够用即可）。
+    """Roughly parse a device label from the User-Agent (no UA parsing library; good enough).
 
-    形如 "Chrome / Windows"、"Safari / iPhone"、"未知设备"。
+    Examples: "Chrome / Windows", "Safari / iPhone", or "未知设备" (unknown device).
     """
     if not user_agent:
         return "未知设备"
     ua = user_agent
 
-    # 浏览器识别（顺序重要：Edge/Chrome 的 UA 都含 Safari）
+    # Browser detection (order matters: both Edge/Chrome UAs contain Safari)
     browser = "未知浏览器"
     for pattern, name in (
         (r"Edg/", "Edge"),
@@ -44,7 +45,7 @@ def parse_device_label(user_agent: str | None) -> str:
             browser = name
             break
 
-    # 操作系统 / 设备识别
+    # Operating system / device detection
     os_name = "未知系统"
     for pattern, name in (
         (r"iPhone", "iPhone"),
@@ -70,7 +71,7 @@ def create_session(
     user_agent: str | None,
     expires_minutes: int,
 ) -> str:
-    """创建登录会话并返回 session_id"""
+    """Create a login session and return its session_id"""
     import secrets
 
     from models import UserSession
@@ -92,10 +93,10 @@ def create_session(
 
 
 def is_session_valid(db, session_id: str | None, user_id: int) -> bool:
-    """校验会话是否仍有效（存在、未撤销、未过期）。
+    """Check whether the session is still valid (exists, not revoked, not expired).
 
-    兼容历史 token（无 session_id）：返回 True，由 token_version 机制兜底，
-    避免升级后把所有在线用户踢掉。
+    Backward compatibility for legacy tokens (no session_id): returns True, with
+    token_version as the safety net, so the upgrade does not kick all online users.
     """
     if not session_id:
         return True
@@ -109,14 +110,15 @@ def is_session_valid(db, session_id: str | None, user_id: int) -> bool:
         return False
     if session.revoked_at is not None:
         return False
-    # 已过期（expires_at 为空表示长期有效）
+    # Expired (a null expires_at means long-lived)
     return not (session.expires_at and session.expires_at < utcnow())
 
 
 def touch_session(db, session_id: str | None) -> None:
-    """更新会话最近活跃时间（用于界面显示"最后活动"）。
+    """Update the session's last-active time (for showing "last activity" in the UI).
 
-    为降低写放大，仅在距上次更新超过 5 分钟时才写库。
+    To reduce write amplification, only writes when more than 5 minutes have passed
+    since the last update.
     """
     if not session_id:
         return
@@ -133,7 +135,7 @@ def touch_session(db, session_id: str | None) -> None:
 
 
 def list_sessions(db, user_id: int, current_session_id: str | None = None) -> list[dict]:
-    """列出用户的活跃会话（未撤销、未过期），按最近活跃倒序"""
+    """List the user's active sessions (not revoked, not expired), most recent first"""
     from models import UserSession
 
     now = utcnow()
@@ -162,7 +164,7 @@ def list_sessions(db, user_id: int, current_session_id: str | None = None) -> li
 
 
 def revoke_session(db, user_id: int, session_id: str) -> bool:
-    """撤销指定会话（仅能撤销自己的）"""
+    """Revoke the given session (only one's own sessions)"""
     from models import UserSession
 
     session = db.query(UserSession).filter(
@@ -177,7 +179,7 @@ def revoke_session(db, user_id: int, session_id: str) -> bool:
 
 
 def revoke_other_sessions(db, user_id: int, keep_session_id: str | None) -> int:
-    """撤销该用户除指定会话外的所有会话（改密时用：保留当前设备）"""
+    """Revoke all of the user's sessions except the given one (used on password change: keep the current device)"""
     from models import UserSession
 
     query = db.query(UserSession).filter(
@@ -192,7 +194,7 @@ def revoke_other_sessions(db, user_id: int, keep_session_id: str | None) -> int:
 
 
 def cleanup_expired_sessions(db, older_than_days: int = 30) -> int:
-    """清理过期已久的会话记录，避免表无限增长"""
+    """Clean up long-expired session records to keep the table from growing unbounded"""
     from models import UserSession
 
     cutoff = utcnow() - timedelta(days=older_than_days)

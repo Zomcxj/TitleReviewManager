@@ -1,14 +1,16 @@
 """
-外部通知渠道（邮件 / Webhook）
+External notification channels (email / webhook)
 
-站内通知由 notifications.create_notification 负责；本模块负责把重要通知
-同步推送到外部渠道，让用户不登录也能收到提醒。
+In-app notifications are handled by notifications.create_notification; this module
+mirrors important notifications to external channels so users get alerted without
+logging in.
 
-设计原则：
-- 全部通过环境变量配置，未配置即静默跳过（不影响主业务流程）
-- 发送失败只记日志，绝不抛异常打断业务（通知是附属能力）
-- 邮件用标准库 smtplib（不引入新依赖），Webhook 用标准库 urllib
-- 支持开关与最小发送级别（只推重要类型，避免轰炸）
+Design principles:
+- Fully configured via environment variables; unconfigured channels are silently
+  skipped (never affects the main business flow)
+- Send failures are only logged, never raised to interrupt business (notifications are auxiliary)
+- Email uses the stdlib smtplib (no new dependency); webhooks use stdlib urllib
+- Supports on/off switches and a minimum notify level (only push important types, avoid bombardment)
 """
 import json
 import logging
@@ -22,21 +24,21 @@ from urllib.request import urlopen
 
 logger = logging.getLogger(__name__)
 
-# ---------- 配置 ----------
+# ---------- Configuration ----------
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "") or SMTP_USER
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "1") not in ("0", "false", "False")
-# 非 SSL 端口（如 25/587）是否强制 STARTTLS：内网邮件服务器常不支持，默认关闭
+# Whether to force STARTTLS on non-SSL ports (e.g. 25/587): intranet mail servers often lack it, off by default
 SMTP_USE_STARTTLS = os.getenv("SMTP_USE_STARTTLS", "0") not in ("0", "false", "False")
 EMAIL_ENABLED = os.getenv("EMAIL_NOTIFY_ENABLED", "0") not in ("0", "false", "False")
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 WEBHOOK_ENABLED = os.getenv("WEBHOOK_NOTIFY_ENABLED", "0") not in ("0", "false", "False")
 
-# 只推送这些类型的通知到外部渠道（避免琐碎通知轰炸）；配置 "*" 表示全部
+# Only push notifications of these types to external channels (avoid trivia bombardment); "*" means all
 EXTERNAL_NOTIFY_TYPES = {
     t.strip() for t in os.getenv("EXTERNAL_NOTIFY_TYPES", "status_change,sla_overdue,pool_recovery").split(",") if t.strip()
 }
@@ -49,7 +51,7 @@ def _should_notify(notify_type: str) -> bool:
 
 
 def _send_email(to_addr: str, subject: str, content: str) -> bool:
-    """发送邮件，失败返回 False（不抛异常）"""
+    """Send an email; returns False on failure (never raises)"""
     if not (EMAIL_ENABLED and SMTP_HOST and to_addr):
         return False
     try:
@@ -61,11 +63,11 @@ def _send_email(to_addr: str, subject: str, content: str) -> bool:
             server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10)
         else:
             server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10)
-            # 仅在显式开启时才升级 TLS —— 内网 SMTP 常不支持 STARTTLS
+            # Only upgrade TLS when explicitly enabled — intranet SMTP often lacks STARTTLS
             if SMTP_USE_STARTTLS:
                 server.starttls()
         try:
-            # 仅在配置了账号密码且服务器声明支持 AUTH 时才登录（内网中继常无需认证）
+            # Only log in when credentials are configured and the server advertises AUTH (intranet relays often need none)
             if SMTP_USER and SMTP_PASS and server.has_extn("auth"):
                 server.login(SMTP_USER, SMTP_PASS)
             server.sendmail(SMTP_FROM, [to_addr], msg.as_string())
@@ -79,10 +81,11 @@ def _send_email(to_addr: str, subject: str, content: str) -> bool:
 
 
 def _webhook_url_is_safe(url: str) -> bool:
-    """只允许 http/https 的 Webhook 地址。
+    """Only allow http/https webhook URLs.
 
-    WEBHOOK_URL 由管理员配置，但配置错误或被篡改时，urlopen 会接受
-    file:// 等协议读取本地文件（CWE-22）。这里从协议层面收紧。
+    WEBHOOK_URL is configured by an admin, but if misconfigured or tampered with,
+    urlopen would accept schemes like file:// to read local files (CWE-22).
+    This tightens the check at the scheme level.
     """
     from urllib.parse import urlparse
     try:
@@ -93,7 +96,7 @@ def _webhook_url_is_safe(url: str) -> bool:
 
 
 def _send_webhook(payload: dict) -> bool:
-    """推送 Webhook（企业微信/钉钉/飞书等机器人），失败返回 False"""
+    """Push a webhook (WeCom/DingTalk/Feishu bots etc.); returns False on failure"""
     if not (WEBHOOK_ENABLED and WEBHOOK_URL):
         return False
     if not _webhook_url_is_safe(WEBHOOK_URL):
@@ -102,7 +105,7 @@ def _send_webhook(payload: dict) -> bool:
     try:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = UrlRequest(WEBHOOK_URL, data=data, headers={"Content-Type": "application/json"}, method="POST")
-        with urlopen(req, timeout=10) as resp:  # nosec B310 - 协议已由 _webhook_url_is_safe 限制为 http/https
+        with urlopen(req, timeout=10) as resp:  # nosec B310 - scheme already restricted to http/https by _webhook_url_is_safe
             ok = 200 <= resp.status < 300
         if ok:
             logger.info(f"Webhook 通知已推送: {payload.get('title')}")
@@ -113,7 +116,7 @@ def _send_webhook(payload: dict) -> bool:
 
 
 def _dispatch(notify_type: str, title: str, content: str, email: str | None) -> None:
-    """实际发送逻辑（在后台线程中执行）"""
+    """Actual send logic (runs in a background thread)"""
     if email:
         _send_email(email, title, content)
     _send_webhook({"msgtype": "text", "text": {"content": f"{title}\n{content}"},
@@ -128,10 +131,11 @@ def notify_external(
     background: bool = True,
 ) -> None:
     """
-    向外部渠道推送通知。
+    Push a notification to external channels.
 
-    在后台线程执行，避免 SMTP/HTTP 阻塞请求；未配置渠道时立即返回。
-    调用方无需 try/except —— 本函数内部已吞掉所有异常。
+    Runs in a background thread so SMTP/HTTP never blocks the request; returns
+    immediately when no channel is configured. Callers need no try/except —
+    this function swallows all exceptions internally.
     """
     if not _should_notify(notify_type):
         return
@@ -147,7 +151,7 @@ def notify_external(
 
 
 def channel_status() -> dict:
-    """返回各渠道配置状态（供管理界面展示，不暴露密码）"""
+    """Return the configuration status of each channel (for the admin UI, no secrets exposed)"""
     return {
         "email": {
             "enabled": EMAIL_ENABLED,

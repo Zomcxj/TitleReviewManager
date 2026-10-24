@@ -1,26 +1,27 @@
 /**
- * 前端错误上报工具。
+ * Frontend error reporting utility.
  *
- * 设计要点（务必保持，否则会引入新的线上问题）：
- * 1. 使用原生 fetch，绝不使用 src/api 里的共享 axios 实例。
- *    共享实例挂了响应拦截器，上报失败会再次触发拦截器 -> 再次上报 -> 死循环。
- * 2. 整段包 try/catch 且 catch 内不做任何事（不 console.error）。
- *    fetch 的 Promise 也必须 .catch 掉，否则会触发 unhandledrejection，
- *    而 unhandledrejection 又会调用本函数 -> 无限自激。
- * 3. 同一个 message 在 60 秒内只上报一次，避免组件循环渲染 / 定时器报错时刷爆后端。
+ * Design notes (must be kept, otherwise new production issues will creep in):
+ * 1. Use native fetch, never the shared axios instance from src/api. That instance has a
+ *    response interceptor attached: a failed report re-triggers it -> re-report -> dead loop.
+ * 2. Wrap the whole body in try/catch and do nothing inside catch (no console.error).
+ *    The fetch Promise must be .catch-ed as well, otherwise it fires unhandledrejection,
+ *    and unhandledrejection calls this function again -> endless self-triggering.
+ * 3. The same message is reported at most once per 60 seconds, preventing backend floods
+ *    from looping component renders / timer errors.
  */
 
-/** 去重窗口：同一 message 在该时间窗内只上报一次 */
+/** Dedupe window: the same message is reported only once within this time window */
 const DEDUPE_WINDOW_MS = 60_000
-/** 去重 Map 的最大条目数，超过后清理过期项，避免长时间运行内存膨胀 */
+/** Max entries in the dedupe Map; beyond it, expired entries are cleaned up to avoid unbounded memory growth over long runs */
 const DEDUPE_MAX_ENTRIES = 200
-/** 去重 key 的最大长度（避免超长 message 作为 key） */
+/** Max length of a dedupe key (prevents overly long messages from being used as keys) */
 const DEDUPE_KEY_MAX_LEN = 200
 
-/** message -> 最近一次上报时间戳 */
+/** message -> timestamp of the most recent report */
 const reportedAt = new Map<string, number>()
 
-/** 返回 true 表示应当跳过本次上报（窗口内已上报过） */
+/** Returns true when this report should be skipped (already reported within the window) */
 function isDuplicate(message: string): boolean {
   const now = Date.now()
   const key = message.slice(0, DEDUPE_KEY_MAX_LEN)
@@ -34,7 +35,7 @@ function isDuplicate(message: string): boolean {
         reportedAt.delete(k)
       }
     }
-    // 清理后仍然过满：整体重置，保证不会无限增长
+    // Still too full after cleanup: reset entirely, guaranteeing it never grows without bound
     if (reportedAt.size >= DEDUPE_MAX_ENTRIES) {
       reportedAt.clear()
     }
@@ -52,8 +53,8 @@ function currentUrl(): string {
 }
 
 /**
- * 上报一条前端错误。匿名可用（登录页出错时也会走到这里）。
- * 永远不会抛出异常，永远不会返回失败的 Promise。
+ * Report one frontend error. Works anonymously (errors on the login page reach here too).
+ * Never throws and never returns a rejected Promise.
  */
 export function reportError(message: string, stack?: string): void {
   try {
@@ -70,7 +71,7 @@ export function reportError(message: string, stack?: string): void {
       payload.stack = stack.slice(0, 5000)
     }
 
-    // 原生 fetch：不经过 axios 拦截器，避免与上报逻辑互相触发
+    // Native fetch: bypasses the axios interceptors so the reporting logic cannot re-trigger itself
     void fetch('/api/client-errors/report', {
       method: 'POST',
       credentials: 'include',
@@ -78,9 +79,9 @@ export function reportError(message: string, stack?: string): void {
       body: JSON.stringify(payload),
       keepalive: true,
     }).catch(() => {
-      // 静默失败：上报失败不能影响页面，也不能触发 unhandledrejection
+      // Fail silently: a failed report must not affect the page, nor trigger unhandledrejection
     })
   } catch {
-    // 静默失败：任何异常都不向外抛
+    // Fail silently: never propagate any exception outward
   }
 }

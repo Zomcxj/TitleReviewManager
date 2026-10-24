@@ -216,7 +216,7 @@ const form = reactive({
   source: '',
 })
 
-// 与后端 enums.CustomerSource 保持一致（客户自助注册不单独提供该值）
+// Keep in sync with backend enums.CustomerSource (not provided separately for customer self-registration)
 const SOURCE_OPTIONS = ['老客户转介绍', '网络渠道', '线下推广', '合作机构', '其他']
 
 interface Project {

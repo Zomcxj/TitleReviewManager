@@ -22,7 +22,7 @@ async def get_customer_follow_ups(
     customer = db.query(Customer).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
-    # 数据隔离：业务员只能查看自己名下客户的跟进记录
+    # Data isolation: salesmen can only view follow-ups of their own customers
     from utils.data_scope import assert_can_access_customer
     assert_can_access_customer(current_user, customer)
 
@@ -51,7 +51,7 @@ async def create_follow_up(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    # 仅业务员/管理员可创建跟进记录（审核员返回 403）
+    # Only salesmen/admins can create follow-ups (reviewers get 403)
     if current_user.get("role") not in ("salesman", "admin"):
         raise HTTPException(status_code=403, detail="仅业务员和管理员可创建跟进记录")
     customer = db.query(Customer).filter(Customer.id == data.customer_id).first()
@@ -69,12 +69,12 @@ async def create_follow_up(
     db.add(follow_up)
     db.flush()
     
-    # 更新客户最后跟进时间（SLA 自动回收机制的依赖）
+    # Update the customer's last follow-up time (dependency of the auto-recycle SLA mechanism)
     customer.last_follow_up_at = utcnow()
     
     if data.next_follow_up_at:
         salesman_id = customer.assigned_salesman_id
-        # 创建者就是该客户的归属业务员时不给自己发通知
+        # Skip self-notification when the creator is the customer's assigned salesman
         if salesman_id and salesman_id != current_user.get("id"):
             create_notification(
                 db=db,
@@ -101,7 +101,7 @@ async def delete_follow_up(
     follow_up = db.query(FollowUp).filter(FollowUp.id == follow_up_id).first()
     if not follow_up:
         raise HTTPException(status_code=404, detail="跟进记录不存在")
-    # 仅记录创建者本人或管理员可删除
+    # Only the creator or an admin can delete
     if follow_up.user_id != current_user.get("id") and current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="仅记录创建者或管理员可删除跟进记录")
     
@@ -117,9 +117,9 @@ async def get_follow_up_schedule(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """待跟进日程（今天/逾期/未来一周）。
+    """Pending follow-up schedule (today / overdue / next week).
 
-    业务员仅自己名下客户；admin/reviewer 可见全部。
+    Salesmen see only their own customers; admin/reviewer see all.
     """
     if scope not in ("today", "overdue", "week"):
         raise HTTPException(status_code=400, detail="scope 只能是 today / overdue / week")
@@ -132,6 +132,6 @@ async def get_follow_up_summary_endpoint(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """待跟进汇总（用于工作台卡片与侧边提醒）"""
+    """Follow-up summary (for workbench cards and sidebar reminders)."""
     from utils.follow_up_schedule import get_follow_up_summary
     return get_follow_up_summary(db, current_user)

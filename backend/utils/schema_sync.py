@@ -1,21 +1,25 @@
 """
-Schema 漂移检测（只读）
+Schema drift detection (read-only)
 
-背景：此前这里是「启动时自动补表 / 补列 / 补索引」的 schema_sync。它有两个
-问题：
+Background: this used to be a schema_sync that "auto-created tables / columns /
+indexes at startup". It had two problems:
 
-1. 存在第二套 schema 权威。Alembic 与启动钩子都能改库结构，一旦两者不一致，
-   排查时无法确定「这个列是谁加的」。
-2. 它会掩盖迁移链的缺陷。实测发现初始迁移漏建了 applications.cycle_deadline
-   索引，却因为启动时被自动补上而长期无人察觉。
+1. A second schema source of truth. Both Alembic and the startup hook could alter
+   the database structure; once they disagreed, there was no way to tell "who added
+   this column" while debugging.
+2. It masked flaws in the migration chain. Testing revealed the initial migration
+   was missing the applications.cycle_deadline index, but because the startup hook
+   silently added it, nobody noticed for a long time.
 
-现在 schema 权威统一到 Alembic 一条路径：改结构只能通过迁移。
-本模块只做只读比对，把「库结构与 ORM 模型不一致」的情况记成告警日志，
-不再执行任何 DDL。真正的结构变更由 `alembic upgrade head` 完成。
+Now the schema source of truth is unified on Alembic: structure changes only via
+migrations. This module performs a read-only comparison only, logging mismatches
+between the database structure and the ORM models as warning logs. It executes no
+DDL at all; real structure changes are done by `alembic upgrade head`.
 
-为什么不直接删除：
-- 漂移信息对运维有诊断价值（例如有人手工改过库、或忘记跑迁移）。
-- 检测结果同时暴露在 /api/health/detail，便于上线后排查。
+Why not delete it outright:
+- Drift information has diagnostic value for ops (e.g. someone hand-edited the DB,
+  or a migration was forgotten).
+- Detection results are also exposed at /api/health/detail for post-deploy debugging.
 """
 import logging
 
@@ -24,24 +28,24 @@ from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
-# Alembic 自建的表，不属于业务模型，比对时忽略
+# Tables created by Alembic itself, not part of the business models; ignored in comparisons
 _IGNORED_TABLES = {"alembic_version"}
 
 
 def detect_drift(engine: Engine, base) -> dict:
-    """只读比对 ORM 模型与实际库结构，返回差异摘要。
+    """Read-only comparison of ORM models against the actual database structure; returns a diff summary.
 
-    返回值：
+    Returns:
       {
-        "missing_tables": [...],   模型有、库中没有的表
-        "extra_tables": [...],     库中有、模型中没有的表（可能有人手工建表）
-        "missing_columns": [...],  "table.column" 形式
-        "extra_columns": [...],    库有、模型无（可能有人手工加列）
-        "missing_indexes": [...],  "table.index" 形式
+        "missing_tables": [...],   tables present in models but not in the DB
+        "extra_tables": [...],     tables present in the DB but not in models (possibly hand-created)
+        "missing_columns": [...],  as "table.column"
+        "extra_columns": [...],    in the DB but not in models (possibly hand-added)
+        "missing_indexes": [...],  as "table.index"
         "in_sync": bool,
       }
 
-    本函数不执行任何写操作，只读。
+    This function performs no writes; read-only.
     """
     summary = {
         "missing_tables": [],
@@ -57,7 +61,7 @@ def detect_drift(engine: Engine, base) -> dict:
         db_tables = set(inspector.get_table_names()) - _IGNORED_TABLES
         model_tables = set(base.metadata.tables.keys())
     except Exception as e:
-        # 检测本身失败不应影响启动，记日志后返回「未知」状态
+        # Detection failures must not affect startup; log and return an "unknown" state
         logger.warning(f"schema 漂移检测无法执行: {e}")
         summary["in_sync"] = None
         return summary
@@ -100,7 +104,7 @@ def detect_drift(engine: Engine, base) -> dict:
 
 
 def log_drift(engine: Engine, base) -> dict:
-    """执行漂移检测并按严重程度记日志。返回检测摘要，供健康检查复用。"""
+    """Run drift detection and log by severity. Returns the summary, reused by the health check."""
     drift = detect_drift(engine, base)
     if drift["in_sync"] is None:
         return drift
@@ -109,7 +113,7 @@ def log_drift(engine: Engine, base) -> dict:
         logger.info("schema 与 ORM 模型一致，无漂移")
         return drift
 
-    # 缺表 / 缺列 / 缺索引 = 迁移没跑到位，需要人工执行 alembic upgrade head
+    # Missing tables / columns / indexes = migrations not fully applied; alembic upgrade head must be run manually
     if drift["missing_tables"] or drift["missing_columns"] or drift["missing_indexes"]:
         logger.warning(
             "检测到 schema 漂移（库落后于模型）："
@@ -119,7 +123,7 @@ def log_drift(engine: Engine, base) -> dict:
             "请执行 `alembic upgrade head` 补齐 —— 启动钩子不再自动修改表结构。"
         )
 
-    # 多出来的表/列通常是手工改动或历史残留，不会导致报错，但值得记录
+    # Extra tables/columns are usually hand edits or historical leftovers; harmless but worth recording
     if drift["extra_tables"] or drift["extra_columns"]:
         logger.warning(
             "检测到库中存在模型未定义的结构（可能为手工改动）："

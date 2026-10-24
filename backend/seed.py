@@ -8,9 +8,9 @@ from models import Application, Customer, Feedback, Material, OperationLog, Revi
 from storage import customer_dir, get_pinyin_initial, save_file
 from utils.timeutil import utcnow
 
-# 注意：数据库结构迁移现在由 Alembic 管理。
-# 请运行 alembic upgrade head 来更新数据库结构。
-# 本脚本仅用于填充种子数据。
+# Note: database schema migrations are now managed by Alembic.
+# Run alembic upgrade head to update the database schema.
+# This script only fills in seed data.
 
 DEFAULT_USERS = [
     {"username": "admin", "password": "admin123", "role": "admin", "real_name": "系统管理员"},
@@ -29,8 +29,8 @@ def seed():
         for u in DEFAULT_USERS:
             existing = db.query(User).filter(User.username == u["username"]).first()
             if not existing:
-                # 种子账号使用文档化的默认口令，标记为必须改密 —— 生产环境首次登录后
-                # 会被强制跳转改密页，避免默认口令长期存活
+                # Seed accounts use documented default passwords and are flagged must-change — first
+                # login in production forces the change-password page, so defaults do not live long
                 user = User(
                     username=u["username"],
                     password_hash=hash_password(u["password"]),
@@ -137,23 +137,23 @@ def seed():
 
         # 4. Create applications
         applications_data = [
-            # 陈明辉 - 初次申报（进行中）
+            # Chen Minghui - initial application (in progress)
             {"customer_idx": 0, "professional_category": "建筑工程", "title_level": "高级工程师", "status": "资料补充"},
-            # 王晓芳 - 已完成资料等待提交机构
+            # Wang Xiaofang - materials completed, awaiting submission to the agency
             {"customer_idx": 1, "professional_category": "教育教学", "title_level": "副教授", "status": "完成资料"},
-            # 刘志强 - 提交评审机构审核中
+            # Liu Zhiqiang - under review by the agency
             {"customer_idx": 2, "professional_category": "电子信息", "title_level": "高级工程师", "status": "提交评审机构审核"},
-            # 赵雪梅 - 返修
+            # Zhao Xuemei - return for revision
             {"customer_idx": 3, "professional_category": "医疗卫生", "title_level": "副主任医师", "status": "返修"},
-            # 孙建国 - 已通过
+            # Sun Jianguo - approved
             {"customer_idx": 4, "professional_category": "建筑设计", "title_level": "高级工程师", "status": "通过"},
-            # 孙建国 - 二次申报（另一专业）
+            # Sun Jianguo - second application (different specialty)
             {"customer_idx": 4, "professional_category": "土木工程", "title_level": "正高级工程师", "status": "初次申报"},
-            # 周丽华 - 初次申报
+            # Zhou Lihua - initial application
             {"customer_idx": 5, "professional_category": "环境工程", "title_level": "高级工程师", "status": "初次申报"},
-            # 吴伟强 - 不通过
+            # Wu Weiqiang - rejected
             {"customer_idx": 6, "professional_category": "道路桥梁", "title_level": "高级工程师", "status": "不通过"},
-            # 郑雅文 - 资料补充
+            # Zheng Yawen - material supplement
             {"customer_idx": 7, "professional_category": "材料科学", "title_level": "研究员", "status": "资料补充"},
         ]
 
@@ -215,7 +215,7 @@ def seed():
                 continue
             app = created_apps[app_idx]
             customer = created_customers[applications_data[app_idx]["customer_idx"]]
-            # 通过归属业务员定位客户 NAS 目录，保证与下载路径一致
+            # Locate the customer's NAS directory via the owning salesman, keeping it consistent with download paths
             salesman = None
             if customer.assigned_salesman_id:
                 salesman = db.query(User).filter(User.id == customer.assigned_salesman_id).first()
@@ -228,8 +228,8 @@ def seed():
 
             for cat in categories:
                 filenames = sample_filenames.get(cat, ["材料.pdf"])
-                # 同一类别下多份材料需要递增版本号（数据库有唯一约束
-                # uq_material_app_category_version，与真实上传逻辑保持一致）
+                # Multiple materials in the same category need incrementing version numbers (the DB has
+                # the unique constraint uq_material_app_category_version, matching real upload logic)
                 for ver, fn in enumerate(filenames, start=1):
                     content = f"这是示例文件: {fn}\n用于职称申报系统测试。\n".encode()
                     rel_path = save_file(customer_rel, cat, fn, content)
@@ -249,7 +249,7 @@ def seed():
             print(f"  -> 为申报批次 #{app.id} 添加了材料")
 
         # 6. Create reviews
-        # For application 1 (王晓芳 - 完成资料), create some review records
+        # For application 1 (Wang Xiaofang - completed materials), create some review records
         if len(created_apps) > 1:
             app1_materials = db.query(Material).filter(Material.application_id == created_apps[1].id).all()
             for mat in app1_materials[:3]:
@@ -277,7 +277,7 @@ def seed():
                 db.add(review)
                 flagged_mat.audit_status = "已标记问题"
 
-        # For application 3 (赵雪梅 - 返修), create review records with issues
+        # For application 3 (Zhao Xuemei - return for revision), create review records with issues
         if len(created_apps) > 3:
             app3_materials = db.query(Material).filter(Material.application_id == created_apps[3].id).all()
             for mat in app3_materials[:2]:
@@ -295,7 +295,7 @@ def seed():
         print("创建审核记录")
 
         # 7. Create feedbacks
-        # For application 3 (返修)
+        # For application 3 (return for revision)
         if len(created_apps) > 3:
             fb = Feedback(
                 application_id=created_apps[3].id,
@@ -306,7 +306,7 @@ def seed():
             db.add(fb)
             print("创建机构反馈记录")
 
-        # For application 4 (通过)
+        # For application 4 (approved)
         if len(created_apps) > 4:
             fb = Feedback(
                 application_id=created_apps[4].id,
@@ -316,7 +316,7 @@ def seed():
             )
             db.add(fb)
 
-        # For application 7 (不通过)
+        # For application 7 (rejected)
         if len(created_apps) > 7:
             fb = Feedback(
                 application_id=created_apps[7].id,

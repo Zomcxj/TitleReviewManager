@@ -114,7 +114,7 @@ const form = reactive({
 
 const mustChange = computed(() => authStore.mustChangePassword)
 
-// 常见弱口令（与后端 utils/validators.py 的 WEAK_PASSWORDS 保持一致）
+// Common weak passwords (kept consistent with WEAK_PASSWORDS in backend utils/validators.py)
 const WEAK_PASSWORDS = new Set([
   'admin123', 'sales123', 'review123', 'password', '123456', '12345678',
   'qwerty', 'abc123', '111111', '000000', 'admin', 'root', 'test123',
@@ -162,7 +162,7 @@ async function handleSubmit() {
     })
     ElMessage.success('密码已修改')
     authStore.clearMustChangePassword()
-    // 同步一次用户信息，确保 must_change_password 等字段与后端一致
+    // Refresh user info once so that fields like must_change_password stay consistent with the backend
     await authStore.fetchUser()
     router.push('/admin/dashboard')
   } catch (e: any) {

@@ -431,7 +431,7 @@ const salesmenList = ref<any[]>([])
 const transferTargetId = ref<number | null>(null)
 const transferLoading = ref(false)
 
-// ---------- 收费与证书 ----------
+// ---------- Fees and certificate ----------
 const PAYMENT_STATUSES = ['未收费', '部分收费', '已结清', '已退款']
 const CERTIFICATE_STATUSES = ['未发证', '已发证', '已交付']
 
@@ -640,7 +640,7 @@ const projectExperiences = computed(() => {
 
 const isSalesman = computed(() => authStore.isSalesman || authStore.isAdmin)
 
-// 申报周期设置：仅管理员/业务员
+// Application cycle settings: admin/salesman only
 const canEditCycle = computed(() => authStore.isAdmin || authStore.isSalesman)
 
 const canSubmitReview = computed(() => {
@@ -648,7 +648,7 @@ const canSubmitReview = computed(() => {
 })
 const canSubmitToInstitution = computed(() => {
   if (!isSalesman.value || !currentApp.value) return false
-  // 只有所有材料都已通过时才显示"提交评审机构"
+  // Only show "submit to review institution" when all materials have passed
   if (materials.value.length === 0) return false
   return materials.value.every((m: any) => m.audit_status === '已通过')
 })
@@ -687,7 +687,7 @@ watch(activeTab, (tab) => {
   if (tab === 'logs' && currentAppId.value) loadLogs(currentAppId.value)
   if (tab === 'finance' && currentAppId.value) loadFinance(currentAppId.value)
 })
-// 每 10 秒自动刷新状态（审核员通过后按钮自动变为"提交评审机构"）
+// Auto-refresh status every 10 seconds (once the reviewer approves, the button switches to "submit to review institution")
 let statusPollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   statusPollTimer = setInterval(() => {
@@ -697,7 +697,7 @@ onMounted(() => {
           applications.value = data.applications
         }
       }).catch(() => {})
-      // 同步刷新材料状态以更新按钮
+      // Also refresh material status to update the button
       if (currentAppId.value) {
         loadMaterials(currentAppId.value)
       }
@@ -718,7 +718,7 @@ async function loadData() {
       currentAppId.value = applications.value[0].id
       loadMaterials(applications.value[0].id)
     }
-    // 初始化报考职称输入框
+    // Initialize the target title input
     inlineTargetTitle.value = data.target_title || ''
   } finally {
     loading.value = false
@@ -752,7 +752,7 @@ async function loadLogs(appId: number) {
   logs.value = data
 }
 
-/** 提交前材料清单校验：缺料时弹窗提示并返回 false（中止提交） */
+/** Material checklist check before submission: when materials are missing, show an alert and return false (abort submission) */
 async function ensureMaterialsComplete(appId: number): Promise<boolean> {
   try {
     const { data } = await api.get(`/api/applications/${appId}/material-checklist`)
@@ -767,7 +767,7 @@ async function ensureMaterialsComplete(appId: number): Promise<boolean> {
     }
     return true
   } catch {
-    // 清单接口异常时放行，由后端兜底校验
+    // If the checklist API fails, let it through; the backend performs the final validation
     return true
   }
 }
@@ -799,7 +799,7 @@ async function handleReapply(appId: number) {
 
 async function handleSubmitToInstitution() {
   if (!currentApp.value) return
-  // 提交前先校验材料清单：缺料直接中止，避免后端 400
+  // Validate the material checklist before submitting: abort on missing materials to avoid a backend 400
   if (!(await ensureMaterialsComplete(currentApp.value.id))) return
   try {
     await api.post(`/api/applications/${currentApp.value.id}/submit-to-institution`, {

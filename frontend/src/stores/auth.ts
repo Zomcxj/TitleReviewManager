@@ -10,12 +10,12 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdmin = computed(() => user.value?.role === 'admin')
   const isSalesman = computed(() => user.value?.role === 'salesman')
   const isReviewer = computed(() => user.value?.role === 'reviewer')
-  // 是否被要求强制修改密码（种子账号 / 管理员重置密码后为 true）
+  // Whether a forced password change is required (true for seed accounts / after an admin resets the password)
   const mustChangePassword = computed(
     () => user.value?.must_change_password === true || localStorage.getItem('must_change_password') === '1'
   )
 
-  /** 把用户信息里的角色与强制改密标记同步到 localStorage，供路由守卫读取 */
+  /** Sync the user's role and forced-password-change flag into localStorage for the router guard to read */
   function syncLocalUser(u: any) {
     if (u?.role) {
       localStorage.setItem('user_role', u.role)
@@ -25,7 +25,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /** 本地解除强制改密标记（改密成功后调用，无需再请求 /me） */
+  /** Locally clear the forced-password-change flag (called after a successful change, no need to request /me again) */
   function clearMustChangePassword() {
     localStorage.setItem('must_change_password', '0')
     if (user.value) {
@@ -38,7 +38,7 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = 'logged-in'
     localStorage.setItem('access_token', 'logged-in')
     user.value = data.user
-    // 存储用户角色与强制改密标记到 localStorage，供路由守卫使用
+    // Store the user role and forced-password-change flag in localStorage for the router guard
     syncLocalUser(data.user)
     return data
   }
@@ -61,7 +61,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       await api.post('/api/auth/logout')
     } catch {
-      // 即使 API 失败也要清除本地状态
+      // Clear local state even if the API call fails
     }
     user.value = null
     token.value = null

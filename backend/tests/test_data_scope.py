@@ -1,7 +1,9 @@
-"""权限与数据隔离测试
+"""Permission and data scope isolation tests
 
-覆盖：业务员只能访问自己名下客户的数据（审核记录/机构反馈/跟进/财务/材料清单），
-审核员可跨业务员（工作需要），管理员不受限。
+Covers: salesmen can only access data of customers under their own name
+(review records / institution feedback / follow-ups / finance / material
+checklist), reviewers may see across salesmen (required by their job), admins
+are unrestricted.
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -26,7 +28,7 @@ def fixture_two_salesmen(db):
 
 @pytest.fixture(name="b_customer_app")
 def fixture_b_customer_app(db, two_salesmen):
-    """业务B 名下的客户与批次（含材料、审核、反馈、跟进）"""
+    """Customer and application owned by salesman B (with material, review, feedback, follow-up)"""
     _, s2 = two_salesmen
     c = models.Customer(name="B的客户", id_number=VALID_ID_B, phone="13800138002",
                         assigned_salesman_id=s2.id, name_pinyin="BDKH")
@@ -54,7 +56,7 @@ def _login(client, username, password):
 
 
 class TestSalesmanCannotAccessOthersData:
-    """业务员访问他人客户数据必须 403"""
+    """A salesman accessing another salesman's customer data must get 403"""
 
     def test_cannot_read_others_customer_detail(self, client, db, two_salesmen, b_customer_app):
         s1, _ = two_salesmen
@@ -85,7 +87,7 @@ class TestSalesmanCannotAccessOthersData:
         assert client.get(f"/api/follow-ups/customer/{c.id}").status_code == 403
 
     def test_cannot_read_others_finance(self, client, db, two_salesmen, b_customer_app):
-        """财务数据（合同金额、回款）属敏感经营数据"""
+        """Finance data (contract amount, payments received) is sensitive business data"""
         _login(client, "sales_a", "pass1234")
         _, a, _ = b_customer_app
         assert client.get(f"/api/finance/application/{a.id}").status_code == 403
@@ -102,7 +104,7 @@ class TestSalesmanCannotAccessOthersData:
 
 
 class TestOwnerCanAccessOwnData:
-    """数据归属人可正常访问"""
+    """The data owner can access it normally"""
 
     def test_owner_can_read_all(self, client, db, two_salesmen, b_customer_app):
         _login(client, "sales_b", "pass1234")
@@ -117,7 +119,7 @@ class TestOwnerCanAccessOwnData:
 
 
 class TestReviewerCrossSalesman:
-    """审核员需要跨业务员查看（工作职责）"""
+    """Reviewers need cross-salesman visibility (job requirement)"""
 
     def test_reviewer_can_read_any(self, client, db, test_reviewer, b_customer_app):
         _login(client, "testreviewer", "reviewpassword")
@@ -128,7 +130,7 @@ class TestReviewerCrossSalesman:
         assert client.get(f"/api/applications/{a.id}/material-checklist").status_code == 200
 
     def test_reviewer_cannot_modify_customer(self, client, db, test_reviewer, b_customer_app):
-        """审核员可读但不可改客户"""
+        """Reviewers may read but not modify customers"""
         _login(client, "testreviewer", "reviewpassword")
         c, _, _ = b_customer_app
         r = client.put(f"/api/customers/{c.id}", json={"phone": "13900139000"})
@@ -153,7 +155,7 @@ class TestAdminUnrestricted:
 
 
 class TestSensitiveFieldMasking:
-    """字段级脱敏：审核员看客户证件号应脱敏"""
+    """Field-level masking: reviewers should see the customer ID number masked"""
 
     def test_reviewer_sees_masked_id(self, client, db, test_reviewer, b_customer_app):
         _login(client, "testreviewer", "reviewpassword")

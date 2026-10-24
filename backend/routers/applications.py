@@ -18,15 +18,16 @@ router = APIRouter(prefix="/api/applications", tags=["申报管理"])
 
 
 class ApplicationCycleUpdate(BaseModel):
-    """申报周期设置（字段均可选，只更新传入项）"""
+    """Application cycle settings (all fields optional; only provided fields are updated)."""
     cycle_year: int | None = None
     cycle_deadline: datetime | None = None
 
 
 def build_material_checklist(db: Session, app: Application) -> dict:
-    """按专业类别统计必传材料完备性。
+    """Compute required-material completeness by professional category.
 
-    材料完备性校验接口与"提交评审机构"共用本函数，保证两处判定口径一致。
+    Shared by the material completeness endpoint and the "submit to institution"
+    endpoint so both apply the same criteria.
     """
     required_categories = required_materials_for(app.professional_category or "")
     rows = (
@@ -62,9 +63,9 @@ async def get_material_checklist(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """材料清单完备性校验。"""
+    """Validate material checklist completeness."""
     user = await get_current_user(request)
-    # 数据隔离：材料清单会暴露客户材料构成，业务员仅限名下客户
+    # Data isolation: the material checklist exposes the customer's material composition, so salesmen are limited to their own customers
     from utils.data_scope import assert_can_access_application
     app = assert_can_access_application(db, user, application_id)
     return build_material_checklist(db, app)
@@ -73,7 +74,7 @@ async def get_material_checklist(
 @router.get("/{application_id}")
 async def get_application(application_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_current_user(request)
-    # 数据隔离：业务员只能查看自己名下客户的批次
+    # Data isolation: salesmen can only view batches of their own customers
     from utils.data_scope import assert_can_access_application
     app = assert_can_access_application(db, user, application_id)
     return ApplicationResponse.model_validate(app).model_dump()
@@ -94,7 +95,7 @@ async def update_application(
     old_status = app.status
     update_data = data.model_dump(exclude_unset=True)
 
-    # 分配审核员：仅管理员/审核员可设置，且目标用户必须是审核员角色
+    # Assign reviewer: only admin/reviewer may set it, and the target user must have the reviewer role
     if "assigned_reviewer_id" in update_data:
         if user.get("role") not in ("admin", "reviewer"):
             raise HTTPException(status_code=403, detail="仅审核员或管理员可以分配审核员")
@@ -111,7 +112,7 @@ async def update_application(
                 status_code=400,
                 detail=f"不允许从 '{old_status}' 转换到 '{new_status}'"
             )
-        # 角色规则：审核结果（返修/通过/不通过）仅审核员/管理员；其余状态流转仅业务员/管理员
+        # Role rules: review results (return for revision/approved/rejected) only by reviewer/admin; other status transitions only by salesman/admin
         role = user.get("role")
         if old_status == "提交评审机构审核":
             if role not in ("reviewer", "admin"):
@@ -201,7 +202,7 @@ async def set_application_cycle(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """设置申报周期（年度 / 截止时间），仅业务员与管理员可操作。"""
+    """Set the application cycle (year / deadline); salesmen and admins only."""
     user = await get_current_user(request)
     if user.get("role") not in ("salesman", "admin"):
         raise HTTPException(status_code=403, detail="仅业务员和管理员可设置申报周期")
@@ -267,14 +268,14 @@ async def submit_to_institution(
         customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
         if not customer or customer.assigned_salesman_id != user.get("id"):
             raise HTTPException(status_code=403, detail="仅可提交自己名下客户的申报批次")
-    # 材料完备性校验：状态/归属校验通过后再判定，缺料直接拒绝提交
+    # Material completeness check: evaluated after status/ownership validation; missing materials reject the submission outright
     checklist = build_material_checklist(db, app)
     if checklist["missing"]:
         raise HTTPException(
             status_code=400,
             detail=f"缺少必传材料：{'、'.join(checklist['missing'])}，请补齐后再提交评审机构",
         )
-    # body 解析容错：空 body 或非法 JSON 时使用空机构名，不抛 500
+    # Body parsing tolerance: fall back to an empty institution name on empty body or invalid JSON instead of raising 500
     institution_name = ""
     try:
         body = await request.json()
@@ -288,7 +289,7 @@ async def submit_to_institution(
     app.submitted_at = utcnow()
     from utils.workbench import clear_review_sla
     clear_review_sla(app)
-    # 申报年度兜底：未设置时落到当前年份
+    # Application year fallback: default to the current year when not set
     if not app.cycle_year:
         app.cycle_year = utcnow().year
     log = OperationLog(
@@ -301,7 +302,7 @@ async def submit_to_institution(
     )
     db.add(log)
 
-    # 通知审核员与管理员：有新批次已报送机构，需关注后续反馈
+    # Notify reviewers and admins: a new batch has been submitted to the institution; watch for follow-up feedback
     customer = db.query(Customer).filter(Customer.id == app.customer_id).first()
     customer_name = customer.name if customer else "客户"
     for u in db.query(User).filter(User.role.in_(["reviewer", "admin"])).all():
@@ -338,7 +339,7 @@ async def create_reapplication(
         customer = db.query(Customer).filter(Customer.id == old_app.customer_id).first()
         if not customer or customer.assigned_salesman_id != user.get("id"):
             raise HTTPException(status_code=403, detail="仅可对自己名下客户的批次发起二次申报")
-    # 重复申报检测：同客户 + 同专业 + 同级别 已有进行中的批次时拦截，避免重复建档
+    # Duplicate application check: block when an in-progress batch already exists for the same customer + category + level, avoiding duplicate records
     duplicate = db.query(Application).filter(
         Application.customer_id == old_app.customer_id,
         Application.professional_category == old_app.professional_category,
@@ -374,7 +375,7 @@ async def create_reapplication(
 
 
 class StatusRevertRequest(BaseModel):
-    """状态回退（纠错）请求"""
+    """Status revert (correction) request"""
     target_status: str
     reason: str = ""
 
@@ -386,10 +387,11 @@ async def revert_application_status(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """状态回退（纠错）—— 仅管理员。
+    """Revert status (correction) — admin only.
 
-    用于修正误操作（如误提交评审机构、误标通过）。允许回退到状态机中
-    可以到达当前状态的前置状态，且必须填写原因以便审计追溯。
+    Used to fix misoperations (e.g. accidentally submitted to institution or marked
+    approved). Allows reverting to any predecessor status that can reach the current
+    status in the state machine; a reason is required for audit traceability.
     """
     user = await get_current_user(request)
     if user.get("role") != "admin":
@@ -410,7 +412,7 @@ async def revert_application_status(
     if target == old_status:
         raise HTTPException(status_code=400, detail="目标状态与当前状态相同")
 
-    # 允许回退到任意「能正向到达当前状态」的前置状态（含当前状态自身的前驱链）
+    # Allow reverting to any predecessor status that can forward-reach the current status (including the current status's own predecessor chain)
     allowed_prev = [s.value for s, nxt in VALID_TRANSITIONS.items() if old_status in [n.value for n in nxt]]
     if target not in allowed_prev:
         raise HTTPException(
@@ -419,7 +421,7 @@ async def revert_application_status(
         )
 
     app.status = target
-    # 回退到提交前状态时，清空机构相关字段避免残留脏数据
+    # When reverting to a pre-submission status, clear institution-related fields to avoid stale data
     if target in ("完成资料", "资料补充", "初次申报", "二次申报"):
         app.submitted_at = None
         app.institution_name = None

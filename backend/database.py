@@ -17,7 +17,7 @@ DATABASE_URL = os.getenv(
     f"sqlite:///{os.path.join(DB_DIR, 'title_service.db')}",
 )
 
-# 相对路径的 SQLite 文件锚定到 backend 目录，避免随启动 cwd 漂移
+# Anchor relative-path SQLite files to the backend directory so they do not drift with the startup cwd
 if DATABASE_URL.startswith("sqlite") and ":memory:" not in DATABASE_URL:
     _path = DATABASE_URL.split(":///", 1)[-1] if ":///" in DATABASE_URL else ""
     if _path and not os.path.isabs(_path):
@@ -30,8 +30,9 @@ if DATABASE_URL.startswith("sqlite"):
 engine = create_engine(DATABASE_URL, connect_args=_connect_args)
 
 
-# SQLite 默认不强制外键约束，会导致删除父记录后留下悬挂引用。
-# 通过 PRAGMA 在每个连接上启用，行为与 PostgreSQL 对齐。
+# SQLite does not enforce foreign key constraints by default, leaving dangling references
+# after a parent record is deleted. Enable them via PRAGMA on every connection to align
+# behavior with PostgreSQL.
 if DATABASE_URL.startswith("sqlite"):
     @event.listens_for(engine, "connect")
     def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):

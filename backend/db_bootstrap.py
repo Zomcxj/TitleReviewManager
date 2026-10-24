@@ -1,31 +1,35 @@
-"""数据库启动引导：让 Alembic 安全接管已存在的库。
+"""Database bootstrap: let Alembic safely take over an existing database.
 
-解决的问题
-----------
-容器启动命令是 `alembic upgrade head && uvicorn ...`。但项目历史上还有一条
-建库路径：本地 start.bat / start.sh 不跑迁移，而是由应用启动钩子调用
-create_all 建表。这样建出的库**有业务表但没有 alembic_version 记录**。
+Problem
+-------
+The container start command is `alembic upgrade head && uvicorn ...`. But the project
+historically had a second path for creating the database: local start.bat / start.sh do
+not run migrations; instead the app startup hook called create_all to build tables. A
+database built that way **has business tables but no alembic_version record**.
 
-一旦这种库搬到 Docker 部署，`alembic upgrade head` 会从初始迁移开始重放，
-在建表时撞上已存在的表并以 `table already exists` 失败，**容器直接起不来**。
+Once such a database is moved to Docker deployment, `alembic upgrade head` replays from
+the initial migration, hits already-existing tables while creating them, and fails with
+`table already exists` — **the container never comes up**.
 
-实测复现（修复前）：
+Reproduced in practice (before the fix):
     sqlite3.OperationalError: table system_configs already exists
-    → alembic 退出码 1 → CMD 中的 && 短路 → uvicorn 不启动
+    → alembic exits with code 1 → the && in CMD short-circuits → uvicorn never starts
 
-处理策略
+Strategy
 --------
-按库的实际状态分三种情况，只做必要动作：
+Three cases based on the database's actual state, doing only what is necessary:
 
-1. 库里有 alembic_version 记录 —— 正常库，直接 upgrade head。
-2. 无 alembic_version 但已有业务表 —— create_all 建出的库。先 stamp head
-   （把现有结构认作已达 head），再 upgrade head（通常无操作）。
-3. 空库 —— 直接 upgrade head，由迁移链建出全部表。
+1. alembic_version record present — a normal database, run upgrade head directly.
+2. No alembic_version but business tables exist — a create_all-built database. First
+   stamp head (accept the existing structure as already at head), then upgrade head
+   (usually a no-op).
+3. Empty database — run upgrade head directly; the migration chain creates all tables.
 
-情况 2 的 stamp 之所以安全：本项目的启动钩子此前一直在做「自动补表/补列/
-补索引」，因此这类库的结构始终被维持在接近模型定义的状态；且迁移链经核对
-与 ORM 模型完全一致（列 100% 匹配）。stamp 之后会立即做一次漂移检测，
-若仍存在差异会打印醒目告警，不会静默放过。
+The stamp in case 2 is safe because: this project's startup hook had always been doing
+"auto table/column/index completion", so such databases were kept close to the model
+definitions; and the migration chain was verified to match the ORM models exactly
+(100% column match). Right after stamping, a drift check runs — if differences remain,
+a prominent warning is printed, never silently ignored.
 """
 import logging
 import os
@@ -36,7 +40,7 @@ from sqlalchemy import create_engine, inspect, text
 
 logger = logging.getLogger(__name__)
 
-# 判断「已有业务表」时忽略的表
+# Tables ignored when detecting "business tables already present"
 _NON_BUSINESS_TABLES = {"alembic_version"}
 
 
@@ -46,7 +50,7 @@ def _get_url() -> str:
 
 
 def _inspect_state(engine) -> tuple[bool, bool]:
-    """返回 (是否有 alembic_version 表, 是否有业务表)"""
+    """Return (whether the alembic_version table exists, whether business tables exist)"""
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
     has_version = "alembic_version" in tables
@@ -55,7 +59,7 @@ def _inspect_state(engine) -> tuple[bool, bool]:
 
 
 def _run_alembic(*args: str) -> int:
-    """在当前工作目录执行 alembic 子命令，返回退出码"""
+    """Run an alembic subcommand in the current working directory, returning its exit code"""
     cmd = [sys.executable, "-m", "alembic", *args]
     logger.info(f"执行: {' '.join(cmd)}")
     proc = subprocess.run(cmd, cwd=os.path.dirname(os.path.abspath(__file__)))
@@ -63,7 +67,7 @@ def _run_alembic(*args: str) -> int:
 
 
 def _read_version(engine) -> str | None:
-    """读取当前 alembic 版本号"""
+    """Read the current alembic version number"""
     try:
         with engine.connect() as conn:
             row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
@@ -73,16 +77,18 @@ def _read_version(engine) -> str | None:
 
 
 def repair(engine) -> dict:
-    """补齐漂移检测发现的缺失列与索引（只增不删，需显式调用）。
+    """Add missing columns and indexes found by drift detection (add-only, must be invoked explicitly).
 
-    为什么需要它：情况 2（create_all 建出的历史库）走 stamp head，等于把现有结构
-    认作已是最新。若该库是老版本代码建的、又缺了后来加的列/索引，迁移不会补
-    —— 旧代码靠启动钩子自动补，钩子移除后这个缺口就没人管了。
+    Why it exists: case 2 (a legacy create_all-built database) goes through stamp head, which
+    accepts the existing structure as already up to date. If that database was built by older
+    code and lacks columns/indexes added later, migrations will not add them — old code relied
+    on the startup hook to auto-complete, and once the hook was removed nobody filled that gap.
 
-    这里只做「加列 / 加索引」，不删不改任何既有结构，且必须显式传 --repair 才执行，
-    保持「schema 变更只能来自迁移」的原则：这是人工确认后的补救，不是启动时的静默 DDL。
+    This only "adds columns / adds indexes"; it deletes or alters no existing structure, and only
+    runs when --repair is passed explicitly, preserving the principle that "schema changes come
+    only from migrations": this is remediation after manual confirmation, not silent DDL at startup.
     """
-    import models  # noqa: F401  确保模型已注册到 Base.metadata
+    import models  # noqa: F401  ensure models are registered in Base.metadata
     from database import Base
     from utils.schema_sync import detect_drift
 
@@ -94,7 +100,7 @@ def repair(engine) -> dict:
     failed: list[str] = []
 
     with engine.begin() as conn:
-        # 补列：SQLite 支持 ADD COLUMN；带 NOT NULL 且无默认值的列无法安全添加，跳过并记录
+        # Add columns: SQLite supports ADD COLUMN; NOT NULL columns without a default cannot be added safely — skip and record
         for item in drift.get("missing_columns", []):
             table_name, column_name = item.split(".", 1)
             table = Base.metadata.tables.get(table_name)
@@ -114,7 +120,7 @@ def repair(engine) -> dict:
             except Exception as e:
                 failed.append(f"{item}（{e}）")
 
-        # 补索引：从模型定义里取对应的 Index 对象重建
+        # Add indexes: rebuild from the corresponding Index objects in the model definitions
         for item in drift.get("missing_indexes", []):
             table_name, index_name = item.split(".", 1)
             table = Base.metadata.tables.get(table_name)
@@ -133,7 +139,7 @@ def repair(engine) -> dict:
             except Exception as e:
                 failed.append(f"{item}（{e}）")
 
-    # 补完再检一次，给出确定结论
+    # Re-check once more after the additions to give a definitive verdict
     after = detect_drift(engine, Base)
     return {"repaired": repaired, "failed": failed, "drift_after": after}
 
@@ -146,7 +152,7 @@ def main(repair_drift: bool = False) -> int:
     )
 
     url = _get_url()
-    # 日志里不回显连接串中的密码
+    # Do not echo the connection string's password into logs
     safe_url = url
     if "@" in url and "://" in url:
         head, tail = url.split("://", 1)
@@ -166,7 +172,7 @@ def main(repair_drift: bool = False) -> int:
                 logger.error("迁移执行失败，启动中止")
                 return code
         elif has_business:
-            # create_all 建出的库：先认领现有结构，再补跑迁移
+            # create_all-built database: claim the existing structure first, then run catch-up migrations
             logger.warning(
                 "检测到已有业务表但缺少 alembic 版本记录 —— "
                 "这是 create_all 建出的库（本地 start 脚本路径）。"
@@ -190,10 +196,10 @@ def main(repair_drift: bool = False) -> int:
     finally:
         engine.dispose()
 
-    # 迁移完成后做一次只读漂移检测，把结果明确打出来
+    # After migrations, run a read-only drift check and report the result explicitly
     engine = create_engine(url)
     try:
-        import models  # noqa: F401  确保模型已注册到 Base.metadata
+        import models  # noqa: F401  ensure models are registered in Base.metadata
         from database import Base
         from utils.schema_sync import detect_drift
 

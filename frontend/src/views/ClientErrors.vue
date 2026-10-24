@@ -117,7 +117,7 @@ const pagination = reactive({
   total: 0,
 })
 
-/** 后端返回 ISO 时间，格式化为 YYYY-MM-DD HH:mm:ss（本地时区），不引入 dayjs */
+/** The backend returns ISO time; format it as YYYY-MM-DD HH:mm:ss in the local timezone without adding dayjs */
 function formatTime(time: string | null | undefined): string {
   if (!time) return '-'
   const d = new Date(time)
@@ -159,7 +159,7 @@ async function handleDelete(row: ClientError) {
   try {
     await api.delete(`/api/client-errors/${row.id}`)
     ElMessage.success('已删除')
-    // 删除后当前页可能为空，回退一页
+    // The current page may become empty after deletion; fall back one page
     if (items.value.length === 1 && pagination.page > 1) {
       pagination.page -= 1
     }

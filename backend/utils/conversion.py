@@ -1,16 +1,18 @@
 """
-转化漏斗统计
+Conversion funnel statistics
 
-业务价值：老板最关心的是"从咨询到拿证，各环节漏了多少"。
-只有基础统计（客户总数、申报总数）回答不了这个问题。
+Business value: what management cares about most is "from inquiry to certificate,
+how much leaks away at each stage". Basic statistics (total customers, total
+applications) cannot answer this.
 
-漏斗阶段：
-    建档（客户建立）
-      → 材料准备中（有过材料上传）
-      → 提交评审机构（进入 SUBMITTED 及之后）
-      → 评审通过（APPROVED）
+Funnel stages:
+    Registered (customer created)
+      -> Preparing materials (has uploaded materials)
+      -> Submitted to review agency (entered SUBMITTED or later)
+      -> Review approved (APPROVED)
 
-每阶段给出数量与相对上一阶段的转化率，并标出流失最多的环节。
+Each stage reports its count and conversion rate relative to the previous stage,
+and highlights the stage with the largest drop-off.
 """
 import logging
 from datetime import timedelta
@@ -21,9 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 def get_conversion_funnel(db, days: int | None = 180, salesman_id: int | None = None) -> dict:
-    """计算申报转化漏斗。
+    """Compute the application conversion funnel.
 
-    按**客户**口径统计（一个客户可能有多批次，取其在漏斗中最靠后的阶段）。
+    Counted by the **customer** criterion (a customer may have multiple applications;
+    take their latest stage in the funnel).
     """
     from sqlalchemy import distinct
 
@@ -34,7 +37,7 @@ def get_conversion_funnel(db, days: int | None = 180, salesman_id: int | None = 
     if days:
         since = utcnow() - timedelta(days=days)
 
-    # 1. 建档：符合条件的客户
+    # 1. Registered: customers matching the criteria
     cust_q = db.query(Customer).filter(Customer.is_deleted == False)  # noqa: E712
     if since:
         cust_q = cust_q.filter(Customer.created_at >= since)
@@ -56,7 +59,7 @@ def get_conversion_funnel(db, days: int | None = 180, salesman_id: int | None = 
             "total_customers": 0,
         }
 
-    # 2. 材料准备：有材料上传的客户
+    # 2. Preparing materials: customers with uploaded materials
     with_materials = {
         row[0] for row in (
             db.query(distinct(Application.customer_id))
@@ -66,7 +69,7 @@ def get_conversion_funnel(db, days: int | None = 180, salesman_id: int | None = 
         )
     }
 
-    # 3. 提交机构：有批次进入过 SUBMITTED 及之后状态的客户
+    # 3. Submitted to agency: customers with an application that reached SUBMITTED or later
     post_submit_statuses = [
         ApplicationStatus.SUBMITTED.value,
         ApplicationStatus.REVISE.value,
@@ -83,7 +86,7 @@ def get_conversion_funnel(db, days: int | None = 180, salesman_id: int | None = 
             .all()
         )
     }
-    # 兼容历史数据：没有 submitted_at 但状态已推进的也算
+    # Backward compatibility: also count customers without submitted_at whose status has advanced
     submitted |= {
         row[0] for row in (
             db.query(distinct(Application.customer_id))
@@ -95,7 +98,7 @@ def get_conversion_funnel(db, days: int | None = 180, salesman_id: int | None = 
         )
     }
 
-    # 4. 通过
+    # 4. Approved
     approved = {
         row[0] for row in (
             db.query(distinct(Application.customer_id))
@@ -112,7 +115,7 @@ def get_conversion_funnel(db, days: int | None = 180, salesman_id: int | None = 
 
     stages = []
     prev = None
-    # names 与 stages_count 长度必须一致（同一处定义），strict=True 让不一致直接报错
+    # names and stages_count must have equal length (defined together); strict=True fails fast on mismatch
     for name, cnt in zip(names, stages_count, strict=True):
         stages.append({
             "name": name,
@@ -122,7 +125,7 @@ def get_conversion_funnel(db, days: int | None = 180, salesman_id: int | None = 
         })
         prev = cnt
 
-    # 流失最多的环节
+    # Stage with the largest drop-off
     drop_off = None
     max_lost = 0
     for i in range(1, len(stages_count)):

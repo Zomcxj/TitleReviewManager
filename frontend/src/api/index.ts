@@ -13,15 +13,15 @@ api.interceptors.response.use(
     const status = error.response?.status
 
     if (status === 401) {
-      // 401 是正常业务流程（会话过期），清 token 跳登录，不上报
+      // 401 is part of the normal flow (session expired): clear the token and redirect to login; not reported
       localStorage.removeItem('access_token')
       localStorage.removeItem('user_role')
       router.push('/login')
       return Promise.reject(error)
     }
 
-    // 仅上报 5xx 服务端异常；4xx 属于业务错误（校验失败、无权限、不存在），不上报
-    // reportError 使用原生 fetch，不经过本拦截器，不存在循环上报
+    // Only 5xx server errors are reported; 4xx are business errors (validation failure, no permission, not found), not reported
+    // reportError uses native fetch and bypasses this interceptor, so there is no reporting loop
     if (typeof status === 'number' && status >= 500) {
       const url = error.config?.url || ''
       let detail = ''

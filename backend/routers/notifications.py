@@ -101,7 +101,7 @@ async def clear_read_notifications(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """清理本人所有已读通知（避免通知列表无限膨胀）。注意：必须声明在 /{notification_id} 之前，否则会被动态路由遮蔽。"""
+    """Clear all read notifications of the current user (prevents the notification list from growing unbounded). Note: must be declared before /{notification_id}, otherwise it gets shadowed by the dynamic route."""
     user_id = current_user.get("id")
     deleted = db.query(Notification).filter(
         Notification.user_id == user_id,
@@ -117,7 +117,7 @@ async def delete_notification(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """删除单条通知（仅本人的通知）"""
+    """Delete a single notification (only the owner's own notifications)"""
     user_id = current_user.get("id")
     notification = db.query(Notification).filter(
         Notification.id == notification_id,
@@ -139,10 +139,12 @@ def create_notification(
     related_type: str = None,
     related_id: int = None,
 ):
-    """工具函数：创建通知。只加入会话，不提交 —— 由调用方统一 commit，保证业务原子性。
+    """Utility: create a notification. Only adds to the session without committing — the caller
+    commits, preserving business atomicity.
 
-    同时异步推送到外部渠道（邮件/Webhook），让用户不登录也能收到重要提醒。
-    外部渠道未配置时静默跳过，发送失败也不影响站内通知。
+    Also pushes asynchronously to external channels (email/Webhook) so users receive
+    important reminders without logging in. Silently skipped when external channels are
+    unconfigured; delivery failures do not affect in-app notifications.
     """
     notification = Notification(
         user_id=user_id,
@@ -154,7 +156,7 @@ def create_notification(
     )
     db.add(notification)
 
-    # 外部渠道推送（后台线程，失败不影响业务）
+    # External channel push (background thread; failures do not affect business)
     try:
         from utils.notify_channels import notify_external
         user = db.query(User).filter(User.id == user_id).first()
@@ -165,7 +167,8 @@ def create_notification(
             email=getattr(user, "email", None) if user else None,
         )
     except Exception as e:
-        # 外部推送失败不影响站内通知，但静默 pass 会让「配置了却没发出去」无从排查
+        # External push failure does not affect in-app notifications, but a silent pass would
+        # make "configured yet never delivered" impossible to troubleshoot
         logger.warning(f"外部通知推送失败（站内通知已创建）: {e}")
 
     return notification

@@ -31,7 +31,7 @@ router = APIRouter(prefix="/api/auth", tags=["认证"])
 
 USERNAME_PATTERN = re.compile(r'^[a-zA-Z0-9_]{2,50}$')
 
-# IP 限流参数（内存态版本已废弃，此处仅作为数据库限流的阈值配置）
+# IP rate limiting parameters (the in-memory version is deprecated; these serve only as thresholds for the database-backed rate limiter)
 MAX_ATTEMPTS_PER_WINDOW = 100
 RATE_WINDOW_SECONDS = 300
 
@@ -42,7 +42,7 @@ def _user_agent(request: Request) -> str:
 
 def _write_login_log(db: Session, *, user_id, username, action: str, request: Request,
                      client_ip: str, detail: str = None, resource_id=None):
-    """写入登录审计日志。日志失败绝不能影响登录流程，因此整体 try/except 包裹。"""
+    """Write a login audit log. A logging failure must never break the login flow, hence the surrounding try/except."""
     try:
         db.add(OperationLog(
             user_id=user_id,
@@ -61,22 +61,22 @@ def _write_login_log(db: Session, *, user_id, username, action: str, request: Re
 
 @router.post("/login")
 async def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    # Get client IP（反代场景下从 X-Forwarded-For 解析，见 utils/request_context）
+    # Get client IP (resolved from X-Forwarded-For behind reverse proxies, see utils/request_context)
     from utils.request_context import cookie_extra_kwargs, get_client_ip
     client_ip = get_client_ip(request)
 
-    # 1. Rate limiting per IP（数据库存储，多 worker 共享计数）
+    # 1. Rate limiting per IP (database-backed so counters are shared across workers)
     check_ip_rate_limit(db, client_ip, MAX_ATTEMPTS_PER_WINDOW, RATE_WINDOW_SECONDS)
 
-    # 锁定阈值/时长由系统配置驱动（默认 10 次锁 15 分钟）
+    # Lockout threshold/duration driven by system config (default: 10 attempts locks for 15 minutes)
     lockout_threshold = get_config(db, "login_lockout_threshold")
     lockout_minutes = get_config(db, "login_lockout_minutes")
 
-    # 2. Account lockout check（被锁定时记录审计并拒绝）
+    # 2. Account lockout check (audit-logged and rejected when locked)
     try:
         check_account_lock(db, req.username)
     except HTTPException:
-        # 锁定期内的尝试也计入 IP 限流，避免被锁后继续无限试探
+        # Attempts during lockout still count toward IP rate limiting, preventing endless probing after lockout
         record_attempt(db, client_ip)
         _write_login_log(
             db, user_id=None, username=req.username,
@@ -102,20 +102,20 @@ async def login(req: LoginRequest, request: Request, db: Session = Depends(get_d
     if not user or not user.password_hash or not verify_password(req.password, user.password_hash):
         record_attempt(db, client_ip)
         record_failed_login(db, req.username, lockout_threshold, lockout_minutes)
-        # 仅记录尝试的用户名，不暴露用户是否存在
+        # Log only the attempted username; do not reveal whether the user exists
         _write_login_log(
             db, user_id=None, username=req.username,
             action="登录失败", request=request, client_ip=client_ip,
             detail=f"IP: {client_ip}",
         )
         db.commit()
-        # 暴力破解检测：同一 IP 短时间内大量失败时通知管理员
+        # Brute-force detection: notify admins when one IP fails many times in a short window
         _alert_brute_force(db, client_ip, req.username)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     # 5. Reset failed login counter on success
     reset_login_state(db, req.username)
-    # 创建会话记录，使该设备可被单独管理/下线
+    # Create a session record so the device can be managed/revoked individually
     from utils.session_manager import create_session
     session_id = create_session(
         db=db, user_id=user.id,
@@ -137,7 +137,7 @@ async def login(req: LoginRequest, request: Request, db: Session = Depends(get_d
     user_dict = UserResponse.model_validate(user).model_dump(mode="json")
     response_data = {"message": "登录成功", "user": user_dict}
     resp = JSONResponse(content=response_data)
-    # Cookie 生命周期与 JWT 有效期(480min)保持一致，避免 cookie 残留但 token 已过期
+    # Keep the cookie lifetime aligned with the JWT validity (480min) to avoid a stale cookie with an expired token
     resp.set_cookie(
         key="access_token", value=token,
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
@@ -148,7 +148,7 @@ async def login(req: LoginRequest, request: Request, db: Session = Depends(get_d
 
 @router.post("/logout")
 async def logout(request: Request, db: Session = Depends(get_db)):
-    """退出登录：撤销当前会话，使该 token 立即失效（而不仅是清 cookie）"""
+    """Log out: revoke the current session so the token becomes invalid immediately (not just clearing the cookie)"""
     try:
         user_info = await get_current_user(request)
         sid = user_info.get("sid")
@@ -158,7 +158,7 @@ async def logout(request: Request, db: Session = Depends(get_db)):
             revoke_session(db, uid, sid)
             db.commit()
     except Exception:
-        # 未登录或 token 已失效时，仍应正常返回并清 cookie
+        # When not logged in or the token is already invalid, still return normally and clear the cookie
         pass
     resp = JSONResponse(content={"message": "已退出"})
     resp.delete_cookie(key="access_token")
@@ -175,10 +175,11 @@ async def get_me(request: Request, db: Session = Depends(get_db)):
 
 
 def _alert_brute_force(db: Session, client_ip: str, username: str) -> None:
-    """暴力破解检测：同一 IP 在窗口内失败次数超阈值时通知全部管理员。
+    """Brute-force detection: notify all admins when one IP exceeds the failure threshold within the window.
 
-    仅在跨过阈值的**那一次**发通知（用 30 分钟去重窗口），避免每次失败都轰炸。
-    任何异常都吞掉，绝不能影响登录流程。
+    Notifies only on the single attempt that crosses the threshold (with a 30-minute
+    dedup window) to avoid bombarding admins on every failure. Any exception is
+    swallowed; this must never affect the login flow.
     """
     try:
         from datetime import timedelta
@@ -189,7 +190,7 @@ def _alert_brute_force(db: Session, client_ip: str, username: str) -> None:
         window_minutes = 10
         threshold = 20
         since = utcnow() - timedelta(minutes=window_minutes)
-        # 统计该 IP 维度（含进度查询等复用同一表，用 key 前缀区分）
+        # Count at the IP dimension (progress checks etc. reuse the same table, distinguished by key prefix)
         fails = db.query(LoginAttempt).filter(
             LoginAttempt.scope == "ip",
             LoginAttempt.key == client_ip,
@@ -198,7 +199,7 @@ def _alert_brute_force(db: Session, client_ip: str, username: str) -> None:
         if fails < threshold:
             return
 
-        # 去重：30 分钟内已告警过同一 IP 则跳过
+        # Dedup: skip if the same IP was already alerted within 30 minutes
         dedup_since = utcnow() - timedelta(minutes=30)
         recent = db.query(Notification).filter(
             Notification.type == "security_alert",
@@ -228,7 +229,7 @@ def _alert_brute_force(db: Session, client_ip: str, username: str) -> None:
 
 @router.get("/lock-status")
 async def get_lock_status(request: Request, db: Session = Depends(get_db)):
-    """获取当前账号锁定状态（公开接口，不认证，用于前端提示剩余等待时间）"""
+    """Get the current account lock status (public, unauthenticated; used by the frontend to show remaining wait time)"""
     username = request.query_params.get("username", "")
     if not username:
         return {"locked": False}
@@ -237,7 +238,7 @@ async def get_lock_status(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/sessions")
 async def list_my_sessions(request: Request, db: Session = Depends(get_db)):
-    """列出当前账号的活跃登录设备"""
+    """List active login devices for the current account"""
     user_info = await get_current_user(request)
     from utils.session_manager import list_sessions
     uid = user_info.get("user_id") or user_info.get("id")
@@ -247,7 +248,7 @@ async def list_my_sessions(request: Request, db: Session = Depends(get_db)):
 
 @router.delete("/sessions/{session_id}")
 async def revoke_my_session(session_id: str, request: Request, db: Session = Depends(get_db)):
-    """下线指定设备（只能操作自己的会话）"""
+    """Revoke a specific device (only one's own sessions)"""
     user_info = await get_current_user(request)
     from utils.session_manager import revoke_session
     uid = user_info.get("user_id") or user_info.get("id")
@@ -259,7 +260,7 @@ async def revoke_my_session(session_id: str, request: Request, db: Session = Dep
 
 @router.post("/sessions/revoke-others")
 async def revoke_other_sessions(request: Request, db: Session = Depends(get_db)):
-    """下线除当前设备外的所有设备（怀疑账号被盗时使用）"""
+    """Revoke all devices except the current one (use when account theft is suspected)"""
     user_info = await get_current_user(request)
     from utils.session_manager import revoke_other_sessions as revoke_others
     uid = user_info.get("user_id") or user_info.get("id")

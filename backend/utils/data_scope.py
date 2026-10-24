@@ -1,12 +1,15 @@
 """
-数据隔离（按客户归属）
+Data isolation (by customer ownership)
 
-背景：业务员只能看到自己名下客户的数据。此前隔离校验散落在各 router 里
-（materials.py 有本地实现，reviews/feedback 完全没有），导致：
-- 任何登录用户都能查任意批次的审核记录与机构反馈（含退回原因、机构意见）
-- 业务员能看到他人客户的审核详情
+Background: salesmen should only see data of their own customers. Isolation checks
+used to be scattered across routers (materials.py had a local implementation;
+reviews/feedback had none at all), which meant:
+- Any logged-in user could query review records and agency feedback of any
+  application (including return reasons and agency opinions)
+- A salesman could see review details of other salesmen's customers
 
-这里统一成一个可复用的检查函数，新增查询接口时直接调用即可。
+This module consolidates the checks into one reusable function; new query
+endpoints can simply call it.
 """
 
 from fastapi import HTTPException
@@ -16,7 +19,7 @@ from models import Application, Customer
 
 
 def get_application_or_404(db: Session, application_id: int) -> Application:
-    """取批次，不存在或已软删除则 404"""
+    """Fetch an application; 404 if missing or soft-deleted"""
     app = db.query(Application).filter(
         Application.id == application_id,
         Application.is_deleted == False,  # noqa: E712
@@ -27,19 +30,19 @@ def get_application_or_404(db: Session, application_id: int) -> Application:
 
 
 def get_customer_of_application(db: Session, app: Application) -> Customer | None:
-    """取批次所属客户"""
+    """Fetch the customer owning the application"""
     if not app or not app.customer_id:
         return None
     return db.query(Customer).filter(Customer.id == app.customer_id).first()
 
 
 def assert_can_access_customer(user: dict, customer: Customer | None, action: str = "查看") -> None:
-    """校验当前用户是否有权访问该客户的数据。
+    """Check whether the current user may access this customer's data.
 
-    规则：
-    - admin / reviewer：不限（审核员需要跨业务员审核）
-    - salesman：仅自己名下客户
-    - 客户不存在：视为无权（避免通过"客户已删除"探测存在性）
+    Rules:
+    - admin / reviewer: unrestricted (reviewers must review across salesmen)
+    - salesman: only their own customers
+    - Missing customer: treated as no access (avoids probing existence via "customer deleted")
     """
     role = (user or {}).get("role")
     if role in ("admin", "reviewer"):
@@ -53,7 +56,7 @@ def assert_can_access_customer(user: dict, customer: Customer | None, action: st
 
 
 def assert_can_access_application(db: Session, user: dict, application_id: int, action: str = "查看") -> Application:
-    """按批次 ID 校验访问权，返回批次对象（不存在时 404）"""
+    """Check access by application ID; returns the application (404 if missing)"""
     app = get_application_or_404(db, application_id)
     customer = get_customer_of_application(db, app)
     assert_can_access_customer(user, customer, action)
@@ -61,7 +64,7 @@ def assert_can_access_application(db: Session, user: dict, application_id: int, 
 
 
 def assert_can_access_material(db: Session, user: dict, material_id: int, action: str = "查看"):
-    """按材料 ID 校验访问权，返回 (material, application, customer)"""
+    """Check access by material ID; returns (material, application, customer)"""
     from models import Material
 
     material = db.query(Material).filter(Material.id == material_id).first()

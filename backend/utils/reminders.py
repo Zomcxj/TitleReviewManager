@@ -1,9 +1,10 @@
 """
-运营催办：跟进逾期、审核 SLA、申报截止
+Operational reminders: overdue follow-ups, review SLA, application deadlines
 
-这些提醒此前要么没接到调度器（跟进逾期），要么配置项 sla_hours_before_review
-从未被写入任何字段。调度器每轮调用 send_operational_reminders()。
-同一对象同一类型每天只提醒一次，避免轰炸。
+Previously these reminders either were never wired to the scheduler (overdue
+follow-ups) or the sla_hours_before_review config was never written to any field.
+The scheduler calls send_operational_reminders() each round. At most one reminder
+per object per type per day, to avoid bombardment.
 """
 import logging
 from datetime import datetime, timedelta, timezone
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def _today_start() -> datetime:
-    # Notification.created_at 以 aware UTC 写入，去重比较需使用 aware 时间
+    # Notification.created_at is stored as aware UTC; dedup comparisons need aware datetimes
     now = datetime.now(timezone.utc)
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -50,9 +51,10 @@ def _notify_admins(db: Session, *, title: str, content: str, ntype: str, related
 
 
 def send_review_sla_reminders(db: Session) -> int:
-    """审核 SLA 已超时：通知分配审核员（未分配则通知全部审核员）+ 管理员。
+    """Review SLA exceeded: notify the assigned reviewer (or all reviewers if unassigned) + admins.
 
-    只催仍有待审核材料的批次，避免材料已全部审完还反复提醒。
+    Only nudge applications that still have materials pending review, avoiding
+    repeated reminders after everything has already been reviewed.
     """
     now = utcnow()
     pending_app_ids = {
@@ -113,7 +115,7 @@ def send_review_sla_reminders(db: Session) -> int:
 
 
 def send_cycle_deadline_reminders(db: Session) -> int:
-    """申报截止：已逾期或 3 天内到期，通知归属业务员 + 管理员。"""
+    """Application deadline: overdue or due within 3 days; notify the owning salesman + admins."""
     now = utcnow()
     soon = now + timedelta(days=3)
     rows = (
@@ -161,7 +163,7 @@ def send_cycle_deadline_reminders(db: Session) -> int:
 
 
 def send_operational_reminders() -> dict:
-    """调度器入口：跟进逾期 + 审核 SLA + 申报截止。"""
+    """Scheduler entry point: overdue follow-ups + review SLA + application deadlines."""
     from database import SessionLocal
 
     db = SessionLocal()

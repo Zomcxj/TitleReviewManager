@@ -1,9 +1,10 @@
 """
-系统参数配置服务
+System configuration service
 
-管理员可在界面上调整运行参数（公海限额、SLA 时长、锁定阈值等）。
-取值优先级：数据库 system_configs 表 > enums.DEFAULT_SYSTEM_CONFIG 默认值。
-带短 TTL 缓存，避免每个请求都查库。
+Admins can tune runtime parameters in the UI (public pool quota, SLA durations,
+lockout thresholds, etc.).
+Value priority: the database system_configs table > defaults from enums.DEFAULT_SYSTEM_CONFIG.
+Uses a short-TTL cache so not every request hits the database.
 """
 import time
 from typing import Any
@@ -18,7 +19,7 @@ _cache_at: float = 0.0
 
 
 def _coerce(raw: str, default: Any) -> Any:
-    """按默认值的类型转换存储的字符串"""
+    """Coerce the stored string according to the default value's type"""
     try:
         if isinstance(default, bool):
             return str(raw).strip().lower() in ("1", "true", "yes", "on")
@@ -44,7 +45,7 @@ def _load(db: Session) -> dict[str, Any]:
             if row.key in values:
                 values[row.key] = _coerce(row.value, values[row.key])
     except Exception:
-        # 表尚未创建或查询异常时回落到默认值，不影响主流程
+        # Fall back to defaults when the table does not exist yet or the query fails; never breaks the main flow
         pass
 
     _cache, _cache_at = values, now
@@ -52,12 +53,12 @@ def _load(db: Session) -> dict[str, Any]:
 
 
 def get_config(db: Session, key: str) -> Any:
-    """读取单个配置项"""
+    """Read a single config value"""
     return _load(db).get(key, DEFAULT_SYSTEM_CONFIG.get(key))
 
 
 def get_all_config(db: Session) -> dict[str, Any]:
-    """读取全部配置项（含中文标签，供管理界面展示）"""
+    """Read all config values (with Chinese labels for the admin UI)"""
     values = dict(_load(db))
     return {
         k: {"value": v, "label": SYSTEM_CONFIG_LABELS.get(k, k), "default": DEFAULT_SYSTEM_CONFIG.get(k)}
@@ -66,7 +67,7 @@ def get_all_config(db: Session) -> dict[str, Any]:
 
 
 def set_config(db: Session, key: str, value: Any, username: str = "") -> None:
-    """写入配置项（不存在则创建）"""
+    """Write a config value (created if missing)"""
     from models import SystemConfig
     global _cache_at
     row = db.query(SystemConfig).filter(SystemConfig.key == key).first()
@@ -82,10 +83,10 @@ def set_config(db: Session, key: str, value: Any, username: str = "") -> None:
             updated_by=username,
         ))
     db.commit()
-    _cache_at = 0.0  # 立即失效缓存，下次读取重新加载
+    _cache_at = 0.0  # Invalidate the cache immediately; the next read reloads
 
 
 def invalidate_cache() -> None:
-    """清除缓存（配置变更或测试场景调用）"""
+    """Clear the cache (called on config changes or in tests)"""
     global _cache_at
     _cache_at = 0.0

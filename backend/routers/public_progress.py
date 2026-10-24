@@ -1,10 +1,14 @@
-"""客户进度自助查询（匿名入口）
+"""Customer progress self-service query (anonymous entry point).
 
-安全设计要点：
-1. 必须同时提供「完整身份证号」+「手机号后 4 位」才能查询，防止仅凭身份证号枚举客户。
-2. 任一不匹配统一返回 404 同一文案，不区分"身份证不存在"与"手机号不匹配"，避免信息泄露。
-3. 按 IP 限流（每 5 分钟最多 20 次），计数存数据库以支持多 worker 部署。
-4. 响应体只包含进度信息，绝不返回身份证号 / 手机号 / 工作单位等敏感字段。
+Security design notes:
+1. Both the full ID number and the last 4 digits of the phone number must be provided
+   to query, preventing enumeration of customers by ID number alone.
+2. Any mismatch returns the same unified 404 message, without distinguishing
+   "ID not found" from "phone mismatch", to avoid information leakage.
+3. Rate limiting per IP (at most 20 queries per 5 minutes), with counters stored in
+   the database to support multi-worker deployments.
+4. The response body contains progress info only; sensitive fields such as ID
+   number / phone number / work unit are never returned.
 """
 
 
@@ -18,20 +22,24 @@ from utils.login_guard import check_ip_rate_limit, record_attempt
 
 router = APIRouter(prefix="/api/public-progress", tags=["进度查询"])
 
-RATE_WINDOW_SECONDS = 300  # 5 分钟
+RATE_WINDOW_SECONDS = 300  # 5 minutes
 MAX_QUERIES_PER_WINDOW = 20
 
 
-# ---------- 进度阶段映射 ----------
-# 前端展示的固定 4 个阶段（顺序即推进顺序）
+# ---------- Progress stage mapping ----------
+# The fixed 4 stages shown by the frontend (the order is the progression order)
 PROGRESS_STEPS = ["初次申报", "完成资料", "提交评审机构审核", "通过"]
 
-# 业务状态 -> 阶段索引 的映射规则：
-#   "资料补充" / "二次申报" 属于首轮准备阶段，等同"初次申报"（索引 0）
-#   "完成资料" 即资料齐备，索引 1
-#   "提交评审机构审核" / "返修" / "不通过" 均已进入机构环节，等同"提交评审机构审核"（索引 2）
-#     （"不通过" 到了机构环节但未通过，故 "通过" 阶段仍未达成）
-#   "通过" 索引 3
+# Mapping rules from business status to stage index (the exact status values are the
+# Chinese keys of STATUS_TO_STAGE_INDEX below):
+#   Supplement materials / Second application belong to the first-round preparation
+#   stage, equivalent to Initial application (index 0)
+#   Materials complete means the materials are ready, index 1
+#   Submitted to review agency / Return for revision / Not passed have all entered the
+#   agency phase, equivalent to Submitted to review agency (index 2)
+#     (Not passed reached the agency phase but did not pass, so the Passed stage is
+#     still not achieved)
+#   Passed, index 3
 STATUS_TO_STAGE_INDEX = {
     "初次申报": 0,
     "资料补充": 0,
@@ -50,7 +58,7 @@ class ProgressQuery(BaseModel):
 
 
 def build_progress_steps(current_status: str | None) -> list[dict]:
-    """按固定顺序生成阶段完成情况。"""
+    """Generate stage completion in the fixed order."""
     current_index = STATUS_TO_STAGE_INDEX.get(current_status or "", 0)
     return [
         {"name": name, "done": current_index >= index}
@@ -59,7 +67,7 @@ def build_progress_steps(current_status: str | None) -> list[dict]:
 
 
 def build_materials_summary(db: Session, application_id: int) -> dict:
-    """材料审核状态统计：总数 / 已通过 / 已标记问题 / 待审核。"""
+    """Material audit status summary: total / passed / flagged / pending."""
     materials = db.query(Material).filter(Material.application_id == application_id).all()
     summary = {"total": len(materials), "passed": 0, "flagged": 0, "pending": 0}
     for material in materials:
@@ -73,7 +81,7 @@ def build_materials_summary(db: Session, application_id: int) -> dict:
 
 
 def build_latest_feedback(db: Session, application_id: int) -> str | None:
-    """最近一条机构反馈内容（无则 None）。"""
+    """The latest agency feedback content (None if absent)."""
     feedback = (
         db.query(Feedback)
         .filter(Feedback.application_id == application_id)
@@ -85,7 +93,7 @@ def build_latest_feedback(db: Session, application_id: int) -> str | None:
 
 @router.get("/status")
 async def public_progress_status():
-    """健康探针：供前端探测该自助查询入口是否可用。"""
+    """Health probe: lets the frontend check whether this self-service entry is available."""
     return {"available": True}
 
 
@@ -97,7 +105,8 @@ async def query_progress(
 ):
     from utils.request_context import get_client_ip
     client_ip = get_client_ip(request)
-    # 限流走数据库（多 worker 共享计数）；复用登录尝试表，scope 区分
+    # Rate limiting goes through the database (counters shared across workers); reuses the
+    # login-attempt table, distinguished by scope
     check_ip_rate_limit(db, f"progress:{client_ip}", MAX_QUERIES_PER_WINDOW, RATE_WINDOW_SECONDS)
     record_attempt(db, f"progress:{client_ip}")
     db.commit()
@@ -109,7 +118,8 @@ async def query_progress(
 
     id_number = (data.id_number or "").strip()
     phone_tail = (data.phone_tail or "").strip()
-    # 必须为完整手机号后 4 位数字，否则视为不匹配（避免只提供 1~2 位削弱校验强度）
+    # Must be exactly the last 4 digits of the phone number, otherwise treated as a mismatch
+    # (providing only 1-2 digits would weaken the check)
     if not id_number or len(phone_tail) != 4 or not phone_tail.isdigit():
         raise not_found
 
@@ -120,7 +130,7 @@ async def query_progress(
     )
     if not customer:
         raise not_found
-    # 手机号后 4 位校验：phone 为空则不通过
+    # Last-4-digits check: fails when phone is empty
     phone = customer.phone or ""
     if not phone or not phone.endswith(phone_tail):
         raise not_found

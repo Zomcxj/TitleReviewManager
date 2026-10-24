@@ -1,16 +1,17 @@
-// ESLint 配置（flat config）—— 前端静态检查
+// ESLint configuration (flat config) — frontend static checks
 //
-// 与后端 ruff.toml 同样的取舍：不追求风格统一（那是 prettier 的事），
-// 只启用能发现真实缺陷的规则，避免几百条格式告警淹没真问题。
+// Same trade-off as backend ruff.toml: we don't chase style consistency
+// (that's prettier's job), only enable rules that catch real defects,
+// so hundreds of formatting warnings don't drown out genuine problems.
 //
-// 重点规则：
-//   no-unused-vars        —— 未使用变量/导入（真缺陷，也是 pyflakes 的等价物）
-//   no-undef              —— 未定义变量（打字错误会立刻暴露）
-//   vue/no-unused-refs    —— 定义了但没用到的 ref
-//   vue/no-mutating-props —— 直接改 props（Vue 反模式）
-//   vue/require-v-for-key —— v-for 缺 key（渲染错乱的常见根因）
-//   no-dupe-keys          —— 对象重复键（静默覆盖）
-//   no-constant-condition —— 恒定条件（if (true) 类逻辑错误）
+// Key rules:
+//   no-unused-vars        — unused variables/imports (real defects, the pyflakes equivalent)
+//   no-undef              — undefined variables (typos surface immediately)
+//   vue/no-unused-refs    — refs defined but never used
+//   vue/no-mutating-props — mutating props directly (Vue anti-pattern)
+//   vue/require-v-for-key — v-for missing key (common root cause of broken rendering)
+//   no-dupe-keys          — duplicate object keys (silent overwrite)
+//   no-constant-condition — constant conditions (if (true)-style logic errors)
 
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
@@ -40,14 +41,14 @@ export default [
         ...globals.es2021,
       },
       parserOptions: {
-        // .vue 文件里的 <script lang="ts"> 需要 vue-eslint-parser + ts 解析器组合
+        // <script lang="ts"> inside .vue files needs vue-eslint-parser + the TS parser together
         parser: tseslint.parser,
         extraFileExtensions: ['.vue'],
         sourceType: 'module',
       },
     },
     rules: {
-      // 未使用变量：允许以 _ 开头显式忽略
+      // Unused variables: names starting with _ are explicitly ignored
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
@@ -56,7 +57,8 @@ export default [
           caughtErrorsIgnorePattern: '^_',
         },
       ],
-      // 以下规则对现有代码噪音过大，且与「发现真缺陷」的目标无关
+      // These rules are too noisy for the existing codebase and unrelated to the
+      // "catch real defects" goal
       'vue/multi-word-component-names': 'off',
       'vue/max-attributes-per-line': 'off',
       'vue/singleline-html-element-content-newline': 'off',
@@ -65,14 +67,14 @@ export default [
       'vue/html-indent': 'off',
       'vue/html-closing-bracket-newline': 'off',
       'vue/first-attribute-linebreak': 'off',
-      // any 在对接后端动态响应时无法完全避免
+      // any is unavoidable when consuming dynamic backend responses
       '@typescript-eslint/no-explicit-any': 'warn',
-      // 空函数（如占位 catch）允许，但要显式
+      // Empty functions (e.g. placeholder catch) are allowed, but deliberate
       '@typescript-eslint/no-empty-function': 'off',
     },
   },
 
-  // 测试文件放宽
+  // Relax rules for test files
   {
     files: ['**/*.spec.ts', '**/*.test.ts'],
     languageOptions: {

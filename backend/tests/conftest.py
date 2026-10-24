@@ -30,8 +30,9 @@ def override_get_db():
 @pytest.fixture(name="db")
 def fixture_db():
     Base.metadata.create_all(bind=engine)
-    # get_current_user 内部直接取 database.SessionLocal（非 Depends 注入），
-    # 测试期间把它指向内存库，避免认证回查打到开发库
+    # get_current_user reads database.SessionLocal directly (not injected via Depends),
+    # so point it at the in-memory database during tests to keep auth lookups
+    # away from the dev database
     import database
     original_session_local = database.SessionLocal
     database.SessionLocal = TestingSessionLocal

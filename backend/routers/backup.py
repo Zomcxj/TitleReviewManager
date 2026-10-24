@@ -1,12 +1,13 @@
 """
-数据备份管理（仅管理员）
+Data backup management (admin only)
 
-- 查看历史备份列表（读 manifest）
-- 手动触发一次备份（同步执行）
-- 查看当前备份配置
+- View the historical backup list (reads the manifest)
+- Manually trigger one backup (runs synchronously)
+- View the current backup configuration
 
-底层实现见 tasks/backup.py；自动备份由 utils/scheduler.py 每天定时执行。
-恢复步骤见 tasks/backup.py 模块 docstring 与 .env.example。
+See tasks/backup.py for the underlying implementation; automatic backups run
+daily via utils/scheduler.py. For restore steps, see the tasks/backup.py module
+docstring and .env.example.
 """
 
 from fastapi import APIRouter, Depends, Request
@@ -22,15 +23,15 @@ router = APIRouter(prefix="/api/backup", tags=["数据备份"])
 
 
 class BackupRunRequest(BaseModel):
-    """手动备份请求体（可选）。
+    """Manual backup request body (optional).
 
-    include_files 为 None 时沿用 BACKUP_INCLUDE_FILES 配置。
+    When include_files is None, the BACKUP_INCLUDE_FILES configuration applies.
     """
     include_files: bool | None = None
 
 
 def _log(db: Session, user: dict, action: str, new_value=None, request: Request = None):
-    """写操作审计日志（随调用方事务一起提交）"""
+    """Write an operation audit log (committed with the caller's transaction)"""
     manual_audit_log(
         db=db,
         user_id=user.get("id"),
@@ -49,7 +50,7 @@ async def list_backups(
     db: Session = Depends(get_db),
     user: dict = Depends(require_role("admin")),
 ):
-    """列出所有备份（按时间倒序）与备份目录配置"""
+    """List all backups (newest first) and the backup directory configuration"""
     items = backup_task.list_backups()
     return {
         "items": items,
@@ -66,11 +67,13 @@ async def run_backup_now(
     db: Session = Depends(get_db),
     user: dict = Depends(require_role("admin")),
 ):
-    """立即执行一次备份（同步返回结果摘要）。
+    """Run one backup immediately (returns a result summary synchronously).
 
-    注意：备份包含材料文件打包，数据量大时可能耗时较久（分钟级）。
-    生产环境建议依赖调度器在凌晨自动执行，此接口主要用于小数据量手动验证
-    或紧急备份；如前端调用，请设置足够的请求超时时间。
+    Note: the backup includes packaging material files and may take a long time
+    (minutes) with large data volumes. In production, rely on the scheduler to run
+    automatically in the early morning; this endpoint is mainly for manual
+    verification of small datasets or emergency backups. Frontend callers should
+    set a sufficiently long request timeout.
     """
     include_files = data.include_files if data else None
     outcome = backup_task.run_backup(include_files=include_files)
@@ -93,5 +96,5 @@ async def get_backup_config(
     db: Session = Depends(get_db),
     user: dict = Depends(require_role("admin")),
 ):
-    """返回当前备份配置，供管理界面展示"""
+    """Return the current backup configuration for the admin UI"""
     return backup_task.get_backup_config()

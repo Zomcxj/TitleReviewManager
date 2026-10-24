@@ -1,11 +1,11 @@
 """
-系统参数配置（仅管理员）
+System parameter configuration (admin only)
 
-- 读取全部配置项（含中文标签与默认值）
-- 批量更新（只接受已知 key 且值为数字）
-- 一键恢复默认值
+- Read all config entries (with Chinese labels and default values)
+- Batch update (only accepts known keys with numeric values)
+- One-click restore of defaults
 
-底层读写由 utils/system_config.py 提供（带短 TTL 缓存）。
+Underlying read/write is provided by utils/system_config.py (with a short TTL cache).
 """
 from typing import Any
 
@@ -58,7 +58,7 @@ async def update_config(
         if key not in DEFAULT_SYSTEM_CONFIG:
             skipped.append(key)
             continue
-        # bool 是 int 的子类，这里明确排除，避免 True 被当作数字配置写入
+        # bool is a subclass of int; explicitly exclude it here so True is not written as a numeric config
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise HTTPException(status_code=400, detail=f"配置项 {key} 必须是数字")
         set_config(db, key, value, user.get("username") or "")
